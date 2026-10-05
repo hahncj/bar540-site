@@ -10,8 +10,7 @@
     {
       "binding": "DB",
       "database_name": "bar540",
-      // TODO: replace with the Database ID shown on your D1 database's detail page in the Cloudflare dashboard
-      "database_id": "PASTE_YOUR_D1_DATABASE_ID_HERE"
+      "database_id": "ec39959b-6018-4b76-99af-dc03e9ebda5c"
     }
   ],
   "r2_buckets": [
