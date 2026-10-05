@@ -217,7 +217,15 @@
   }
   .filter-pill.active{background:var(--teal); border-color:var(--teal); color:var(--bg-deep);}
   .bottle-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(220px,1fr)); gap:18px;}
-  .bottle-card{background:var(--panel); border-radius:12px; overflow:hidden; border:1px solid var(--line);}
+  .bottle-card{background:var(--panel); border-radius:12px; overflow:hidden; border:1px solid var(--line); position:relative;}
+  .bottle-delete{
+    position:absolute; top:8px; right:8px; z-index:2;
+    width:28px; height:28px; border-radius:50%; border:none;
+    background:rgba(23,27,37,0.78); color:var(--cream);
+    font-size:15px; line-height:1; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .bottle-delete:hover{background:var(--coral);}
   .bottle-photo{width:100%; aspect-ratio:4/3; object-fit:cover; background:var(--bg); display:block;}
   .bottle-photo-placeholder{
     width:100%; aspect-ratio:4/3; background:var(--bg);
@@ -428,6 +436,7 @@
     }
     content.innerHTML = '<div class="bottle-grid">' + filtered.map(function(b){
       return '<div class="bottle-card">' +
+        '<button class="bottle-delete" data-id="' + b.id + '" type="button" title="Delete">&times;</button>' +
         (b.photo_url
           ? '<img class="bottle-photo" src="' + escapeHtml(b.photo_url) + '" alt="' + escapeHtml(b.name) + '" loading="lazy">'
           : '<div class="bottle-photo-placeholder">&#127866;</div>') +
@@ -443,6 +452,30 @@
       '</div>';
     }).join('') + '</div>';
   }
+
+  content.addEventListener('click', function(e){
+    var delBtn = e.target.closest('.bottle-delete');
+    if (!delBtn) return;
+    var id = delBtn.dataset.id;
+    var passcode = window.prompt('Enter the passcode to delete this bottle:');
+    if (!passcode) return;
+    fetch('/api/bottles/' + encodeURIComponent(id), {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ passcode: passcode })
+    }).then(function(r){
+      return r.json().then(function(data){ return { ok: r.ok, data: data }; });
+    }).then(function(res){
+      if (res.ok) {
+        bottles = bottles.filter(function(b){ return String(b.id) !== String(id); });
+        render();
+      } else {
+        alert((res.data && res.data.error) || 'Could not delete that bottle.');
+      }
+    }).catch(function(){
+      alert('Could not delete that bottle — try again.');
+    });
+  });
 
   filters.addEventListener('click', function(e){
     var btn = e.target.closest('.filter-pill');
