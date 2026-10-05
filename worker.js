@@ -23,7 +23,8 @@ export default {
       }
 
       const passcode = form.get("passcode");
-      if (!env.BOTTLE_PASSCODE || passcode !== env.BOTTLE_PASSCODE) {
+      const expectedPasscode = env.BOTTLE_PASSCODE ? await env.BOTTLE_PASSCODE.get() : null;
+      if (!expectedPasscode || passcode !== expectedPasscode) {
         return new Response(JSON.stringify({ error: "Wrong passcode" }), {
           status: 401,
           headers: { "content-type": "application/json" },
