@@ -203,28 +203,42 @@
   }
   .drink-desc{color:var(--cream-dim); font-size:13.5px; margin-top:8px;}
 
-  /* CELLAR TEASER */
-  .cellar{
-    text-align:center;
-    background:var(--panel);
-    border:2px dashed var(--teal);
-    border-radius:16px;
-    padding:48px 32px;
-  }
-  .cellar h2{
-    font-family:'Fredoka',sans-serif; font-weight:600;
-    font-size:clamp(24px,4vw,30px);
-    color:var(--teal);
-    margin-bottom:12px;
-  }
-  .cellar p{color:var(--cream-dim); max-width:460px; margin:0 auto; font-size:14.5px;}
-  .cellar .tags{
-    margin-top:22px; display:flex; gap:12px; justify-content:center; flex-wrap:wrap;
-  }
+  /* CELLAR - live inventory */
   .tag{
     background:var(--bg); border:1px solid var(--line); color:var(--gold);
     font-size:11px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase;
     padding:8px 16px; border-radius:20px;
+  }
+  .cellar-filters{display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-bottom:32px;}
+  .filter-pill{
+    background:var(--bg); border:1px solid var(--line); color:var(--cream-dim);
+    font-size:11px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase;
+    padding:8px 16px; border-radius:20px; cursor:pointer;
+  }
+  .filter-pill.active{background:var(--teal); border-color:var(--teal); color:var(--bg-deep);}
+  .bottle-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(220px,1fr)); gap:18px;}
+  .bottle-card{background:var(--panel); border-radius:12px; overflow:hidden; border:1px solid var(--line);}
+  .bottle-photo{width:100%; aspect-ratio:4/3; object-fit:cover; background:var(--bg); display:block;}
+  .bottle-photo-placeholder{
+    width:100%; aspect-ratio:4/3; background:var(--bg);
+    display:flex; align-items:center; justify-content:center; font-size:28px;
+  }
+  .bottle-info{padding:14px 16px;}
+  .bottle-name{font-family:'Fredoka',sans-serif; font-weight:600; font-size:16px; color:var(--cream);}
+  .bottle-maker{color:var(--cream-dim); font-size:13px; margin-top:2px;}
+  .bottle-meta{display:flex; justify-content:space-between; align-items:center; margin-top:10px;}
+  .bottle-cat{
+    font-size:10px; font-weight:700; letter-spacing:0.05em; text-transform:uppercase;
+    color:var(--gold);
+  }
+  .bottle-abv{font-size:12px; color:var(--cream-dim);}
+  .bottle-notes{color:var(--cream-dim); font-size:13px; margin-top:8px;}
+  .cellar-empty, .cellar-loading{text-align:center; color:var(--cream-dim); padding:40px 20px;}
+  .cellar-cta{text-align:center; margin-top:32px;}
+  .btn-coral{
+    display:inline-block; background:var(--coral); color:#fff;
+    font-family:'Fredoka',sans-serif; font-weight:600; font-size:15px;
+    padding:12px 28px; border-radius:30px; border:none; cursor:pointer;
   }
 
   /* HOUSE RULES */
@@ -367,17 +381,87 @@
 
 <section class="section" id="cellar">
   <div class="wrap">
-    <div class="cellar">
+    <div class="section-head">
+      <div class="kicker">The Collection</div>
       <h2 class="display">The Cellar</h2>
-      <p>Every whiskey, wine, and specialty beer in the house, cataloged and ready whenever you want to dig in. Coming soon.</p>
-      <div class="tags">
-        <span class="tag">Whiskey</span>
-        <span class="tag">Wine</span>
-        <span class="tag">Specialty Beer</span>
-      </div>
+      <p>Every whiskey, wine, and specialty beer in the house, cataloged and ready whenever you want to dig in.</p>
+    </div>
+
+    <div class="cellar-filters" id="cellarFilters">
+      <button class="filter-pill active" data-cat="all" type="button">All</button>
+      <button class="filter-pill" data-cat="whiskey" type="button">Whiskey</button>
+      <button class="filter-pill" data-cat="wine" type="button">Wine</button>
+      <button class="filter-pill" data-cat="beer" type="button">Specialty Beer</button>
+    </div>
+
+    <div id="cellarContent">
+      <div class="cellar-loading">Loading the cellar&hellip;</div>
+    </div>
+
+    <div class="cellar-cta">
+      <a href="/add.html" class="btn-coral">+ Add a Bottle</a>
     </div>
   </div>
 </section>
+
+<script>
+(function(){
+  var CATEGORY_LABELS = { whiskey: 'Whiskey', wine: 'Wine', beer: 'Specialty Beer' };
+  var content = document.getElementById('cellarContent');
+  var filters = document.getElementById('cellarFilters');
+  var bottles = [];
+  var activeCat = 'all';
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+
+  function render(){
+    var filtered = activeCat === 'all' ? bottles : bottles.filter(function(b){ return b.category === activeCat; });
+    if (!filtered.length){
+      content.innerHTML = '<div class="cellar-empty">' +
+        (bottles.length ? 'Nothing in this category yet.' : 'The cellar is empty so far &mdash; add the first bottle below.') +
+        '</div>';
+      return;
+    }
+    content.innerHTML = '<div class="bottle-grid">' + filtered.map(function(b){
+      return '<div class="bottle-card">' +
+        (b.photo_url
+          ? '<img class="bottle-photo" src="' + escapeHtml(b.photo_url) + '" alt="' + escapeHtml(b.name) + '" loading="lazy">'
+          : '<div class="bottle-photo-placeholder">&#127866;</div>') +
+        '<div class="bottle-info">' +
+          '<div class="bottle-name">' + escapeHtml(b.name) + '</div>' +
+          (b.maker ? '<div class="bottle-maker">' + escapeHtml(b.maker) + '</div>' : '') +
+          '<div class="bottle-meta">' +
+            '<span class="bottle-cat">' + (CATEGORY_LABELS[b.category] || b.category) + '</span>' +
+            (b.abv ? '<span class="bottle-abv">' + escapeHtml(b.abv) + '% ABV</span>' : '') +
+          '</div>' +
+          (b.notes ? '<div class="bottle-notes">' + escapeHtml(b.notes) + '</div>' : '') +
+        '</div>' +
+      '</div>';
+    }).join('') + '</div>';
+  }
+
+  filters.addEventListener('click', function(e){
+    var btn = e.target.closest('.filter-pill');
+    if (!btn) return;
+    var pills = filters.querySelectorAll('.filter-pill');
+    for (var i=0; i<pills.length; i++){ pills[i].classList.remove('active'); }
+    btn.classList.add('active');
+    activeCat = btn.dataset.cat;
+    render();
+  });
+
+  fetch('/api/bottles')
+    .then(function(r){ return r.json(); })
+    .then(function(data){ bottles = Array.isArray(data) ? data : []; render(); })
+    .catch(function(){
+      content.innerHTML = '<div class="cellar-empty">Couldn&rsquo;t load the cellar right now &mdash; try refreshing.</div>';
+    });
+})();
+</script>
 
 <section class="section" id="rules">
   <div class="wrap">

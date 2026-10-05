@@ -1,0 +1,23 @@
+{
+  "name": "bar540-site",
+  "compatibility_date": "2024-09-23",
+  "main": "worker.js",
+  "assets": {
+    "directory": "./",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "bar540",
+      // TODO: replace with the Database ID shown on your D1 database's detail page in the Cloudflare dashboard
+      "database_id": "PASTE_YOUR_D1_DATABASE_ID_HERE"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "PHOTOS",
+      "bucket_name": "bar540-photos"
+    }
+  ]
+}

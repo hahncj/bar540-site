@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Add a Bottle — Bar 540</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#1d2330; --bg-deep:#171b25; --panel:#252c3c; --cream:#f5efe4; --cream-dim:#aab0c2;
+    --coral:#ff7a52; --coral-deep:#e5623c; --teal:#3ecbb3; --gold:#f4b942; --line:rgba(245,239,228,0.12);
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    background:var(--bg); color:var(--cream); font-family:'Nunito',sans-serif;
+    min-height:100vh; padding:32px 20px 80px;
+  }
+  .wrap{max-width:480px; margin:0 auto;}
+  a.back{color:var(--cream-dim); font-size:13px; display:inline-block; margin-bottom:20px;}
+  h1{font-family:'Fredoka',sans-serif; font-weight:600; font-size:28px; margin-bottom:6px;}
+  .sub{color:var(--cream-dim); font-size:14px; margin-bottom:28px;}
+  label{display:block; font-size:13px; font-weight:700; letter-spacing:0.03em; text-transform:uppercase; color:var(--teal); margin:18px 0 6px;}
+  input, select, textarea{
+    width:100%; background:var(--panel); border:1px solid var(--line); color:var(--cream);
+    border-radius:10px; padding:12px 14px; font-size:15px; font-family:inherit;
+  }
+  textarea{resize:vertical; min-height:70px;}
+  .btn{
+    display:block; width:100%; background:var(--coral); color:#fff; border:none;
+    font-family:'Fredoka',sans-serif; font-weight:600; font-size:16px;
+    padding:14px; border-radius:30px; margin-top:28px; cursor:pointer;
+  }
+  .btn:active{background:var(--coral-deep);}
+  .btn-secondary{
+    display:block; width:100%; background:transparent; color:var(--teal); border:1px solid var(--teal);
+    font-family:'Fredoka',sans-serif; font-weight:600; font-size:14px;
+    padding:11px; border-radius:30px; margin-top:10px; cursor:pointer;
+  }
+  #scanner{width:100%; border-radius:10px; overflow:hidden; margin-top:10px; display:none;}
+  #status{margin-top:16px; font-size:14px; text-align:center;}
+  #status.ok{color:var(--teal);}
+  #status.err{color:var(--coral);}
+  #lookupStatus{font-size:13px; color:var(--cream-dim); margin-top:8px; text-align:center;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/#cellar">&larr; Back to the Cellar</a>
+  <h1>Add a Bottle</h1>
+  <div class="sub">Scan a barcode to try auto-filling details, or just type it in.</div>
+
+  <button type="button" class="btn-secondary" id="scanBtn">Scan Barcode</button>
+  <div id="scanner"></div>
+  <div id="lookupStatus"></div>
+
+  <form id="bottleForm">
+    <label>Passcode</label>
+    <input type="password" name="passcode" required autocomplete="off">
+
+    <label>Category</label>
+    <select name="category" required>
+      <option value="">Choose one&hellip;</option>
+      <option value="whiskey">Whiskey</option>
+      <option value="wine">Wine</option>
+      <option value="beer">Specialty Beer</option>
+    </select>
+
+    <label>Name</label>
+    <input type="text" name="name" required placeholder="e.g. Woodford Reserve">
+
+    <label>Maker / Distillery / Winery</label>
+    <input type="text" name="maker" placeholder="e.g. Woodford Reserve Distillery">
+
+    <label>ABV %</label>
+    <input type="number" step="0.1" name="abv" placeholder="45">
+
+    <label>Notes</label>
+    <textarea name="notes" placeholder="Tasting notes, where it's from, why it's here..."></textarea>
+
+    <label>Photo</label>
+    <input type="file" name="photo" accept="image/*" capture="environment">
+
+    <button type="submit" class="btn">Add to the Cellar</button>
+  </form>
+
+  <div id="status"></div>
+</div>
+
+<script src="https://unpkg.com/html5-qrcode/minified/html5-qrcode.min.js"></script>
+<script>
+  var form = document.getElementById('bottleForm');
+  var status = document.getElementById('status');
+  var scanBtn = document.getElementById('scanBtn');
+  var scannerDiv = document.getElementById('scanner');
+  var lookupStatus = document.getElementById('lookupStatus');
+  var html5QrCode;
+
+  scanBtn.addEventListener('click', async function(){
+    if (scannerDiv.style.display === 'block') {
+      await stopScanner();
+      return;
+    }
+    scannerDiv.style.display = 'block';
+    scanBtn.textContent = 'Stop Scanning';
+    html5QrCode = new Html5Qrcode('scanner');
+    try {
+      await html5QrCode.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 250, height: 120 } },
+        onScanSuccess,
+        function(){}
+      );
+    } catch (err) {
+      lookupStatus.textContent = "Couldn't access the camera: " + err;
+      await stopScanner();
+    }
+  });
+
+  async function stopScanner(){
+    if (html5QrCode) {
+      try { await html5QrCode.stop(); html5QrCode.clear(); } catch(e){}
+    }
+    scannerDiv.style.display = 'none';
+    scanBtn.textContent = 'Scan Barcode';
+  }
+
+  async function onScanSuccess(decodedText){
+    await stopScanner();
+    lookupStatus.textContent = 'Looking up ' + decodedText + '...';
+    try {
+      var res = await fetch('/api/lookup?upc=' + encodeURIComponent(decodedText));
+      var data = await res.json();
+      if (data.found) {
+        if (data.title) form.name.value = data.title;
+        if (data.brand) form.maker.value = data.brand;
+        if (data.description) form.notes.value = data.description;
+        lookupStatus.textContent = 'Found a match — double check the details below.';
+      } else {
+        lookupStatus.textContent = "No match found for that barcode — fill in the details manually.";
+      }
+    } catch (e) {
+      lookupStatus.textContent = "Lookup failed — fill in the details manually.";
+    }
+  }
+
+  form.addEventListener('submit', async function(e){
+    e.preventDefault();
+    status.className = '';
+    status.textContent = 'Saving...';
+    var submitBtn = form.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    try {
+      var res = await fetch('/api/bottles', { method: 'POST', body: new FormData(form) });
+      var data = await res.json();
+      if (res.ok) {
+        status.className = 'ok';
+        status.textContent = 'Added! Head back to the Cellar to see it.';
+        form.reset();
+      } else {
+        status.className = 'err';
+        status.textContent = data.error || 'Something went wrong.';
+      }
+    } catch (err) {
+      status.className = 'err';
+      status.textContent = 'Something went wrong — try again.';
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>
