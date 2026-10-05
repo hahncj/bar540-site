@@ -18,5 +18,12 @@
       "binding": "PHOTOS",
       "bucket_name": "bar540-photos"
     }
+  ],
+  "secrets_store_secrets": [
+    {
+      "binding": "BOTTLE_PASSCODE",
+      "store_id": "d7e39048e9b14ecbac44deb7b163e132",
+      "secret_name": "bottle-passcode"
+    }
   ]
 }
