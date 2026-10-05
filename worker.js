@@ -64,6 +64,31 @@ export default {
       return Response.json({ ok: true });
     }
 
+    // --- Delete a bottle ---
+    if (url.pathname.startsWith("/api/bottles/") && request.method === "DELETE") {
+      const id = url.pathname.replace("/api/bottles/", "");
+      let body = {};
+      try {
+        body = await request.json();
+      } catch (e) {}
+
+      const expectedPasscode = env.BOTTLE_PASSCODE ? await env.BOTTLE_PASSCODE.get() : null;
+      if (!expectedPasscode || body.passcode !== expectedPasscode) {
+        return new Response(JSON.stringify({ error: "Wrong passcode" }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      const row = await env.DB.prepare("SELECT photo_url FROM bottles WHERE id = ?").bind(id).first();
+      if (row && row.photo_url) {
+        const key = row.photo_url.replace("/photos/", "");
+        try { await env.PHOTOS.delete(key); } catch (e) {}
+      }
+      await env.DB.prepare("DELETE FROM bottles WHERE id = ?").bind(id).run();
+      return Response.json({ ok: true });
+    }
+
     // --- Serve a stored photo ---
     if (url.pathname.startsWith("/photos/") && request.method === "GET") {
       const key = url.pathname.replace("/photos/", "");
