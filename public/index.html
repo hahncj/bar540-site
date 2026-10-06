@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bar 540</title>
+<link rel="icon" href="/favicon.ico?v=2" sizes="32x32">
+<link rel="icon" type="image/png" href="/favicon-32.png?v=2" sizes="32x32">
+<link rel="icon" type="image/png" href="/icon-192.png?v=2" sizes="192x192">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2">
 <meta name="description" content="Bar 540 — Est. 2012. The family home bar. Time to relax.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -213,14 +217,7 @@
   .tap-handle svg{display:block; overflow:visible;}
   .tap.is-pouring .tap-handle{cursor:pointer;}
   .tap.is-pouring .tap-handle:hover, .tap.pull .tap-handle{transform:rotate(-14deg);}
-  .tap.is-empty .tap-handle{transform:rotate(5deg); filter:drop-shadow(0 6px 8px rgba(0,0,0,0.45)) saturate(0.2) brightness(0.8);}
-  .tap-out-tag{
-    position:absolute; top:34px; left:34px; z-index:2;
-    background:var(--cream); color:#2e2416; border-radius:3px;
-    font-family:'Caveat',cursive; font-weight:700; font-size:19px; line-height:1.2;
-    padding:1px 9px; white-space:nowrap; transform:rotate(12deg);
-    box-shadow:0 3px 8px rgba(0,0,0,0.4);
-  }
+  .tap.is-empty .tap-handle{transform:rotate(5deg);}
   .tap-collar{
     width:30px; height:12px; border-radius:2px;
     background:repeating-linear-gradient(180deg, rgba(0,0,0,0.2) 0 1px, transparent 1px 3px), linear-gradient(90deg, #7d8690, #f4f6f8 45%, #aab3bd 60%, #6f7883);
@@ -657,7 +654,8 @@ function formatDate(iso){
     var id = 'tapShade' + t.id;
     var hasLogo = theme && theme.logoReady;
     var name = t.status === 'pouring' ? (t.beer || '') : 'Empty';
-    var top = theme ? 58 : 12;
+    var empty = t.status !== 'pouring';
+    var top = theme || empty ? 58 : 12;
     var room = 104 - top;
     var natural = name.length * 7.4;
     var parts = [];
@@ -680,6 +678,17 @@ function formatDate(iso){
     parts.push('<path d="M10.2 96H41.8L41 108Q41 113 36 113L16 113Q11 113 11 108Z" fill="#000" opacity="0.22"/>');
     parts.push('<path d="' + HANDLE_BODY + '" fill="url(#' + id + ')"/>');
     parts.push('<ellipse cx="26" cy="4.5" rx="16" ry="1.8" fill="#fff" opacity="0.3"/>');
+    // A dry tap gets a red plastic cup turned upside down over the handle, bar-style.
+    if (empty) {
+      var cup = 'M7-8H45L55 54H-3Z';
+      parts.push('<path d="' + cup + '" fill="#d42a2f"/>');
+      parts.push('<path d="M6.4-2.5H45.6M5.6 3.5H46.4" stroke="#9e1b20" stroke-width="1.2"/>');
+      parts.push('<path d="' + cup + '" fill="url(#' + id + ')"/>');
+      parts.push('<ellipse cx="26" cy="-8" rx="19" ry="2.2" fill="#b3232a"/>');
+      parts.push('<rect x="-4.5" y="51.5" width="61" height="5" rx="2.5" fill="#e8474c"/>');
+      parts.push('<rect x="-4.5" y="54.5" width="61" height="2" rx="1" fill="#fbe9e9" opacity="0.85"/>');
+      parts.push('<path d="M12 0L8 48" stroke="#fff" stroke-width="2.5" stroke-linecap="round" opacity="0.35"/>');
+    }
     return '<svg viewBox="0 0 52 116" width="52" height="116" aria-hidden="true">' +
       '<defs><linearGradient id="' + id + '" x1="0" x2="1" y1="0" y2="0">' +
         '<stop offset="0" stop-color="#000" stop-opacity="0.5"/>' +
@@ -740,7 +749,6 @@ function formatDate(iso){
     return '<div class="tap ' + (pouring ? 'is-pouring' : 'is-empty') + '" style="' + vars + '">' +
       '<div class="tap-handle"' + (pouring ? ' title="Give it a pull"' : '') + '>' +
         handleSvg(t, theme ? theme.color : pouring ? handleColor(t.beer || '') : '#5c636e', theme) +
-        (pouring ? '' : '<div class="tap-out-tag">out!</div>') +
       '</div>' +
       '<div class="tap-collar"></div><div class="tap-shank"></div><div class="tap-spout"></div><div class="tap-stream"></div>' +
       '<div class="tap-glass-wrap">' +
