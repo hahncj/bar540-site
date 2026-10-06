@@ -1,0 +1,41 @@
+# Node / frontend tooling
+node_modules/
+.npm/
+.pnpm-store/
+yarn-error.log*
+npm-debug.log*
+pnpm-debug.log*
+
+# Cloudflare Workers / local dev
+.wrangler/
+.dev.vars
+.env
+.env.*
+!.env.example
+
+# Build / generated output
+/dist/
+/build/
+coverage/
+.cache/
+
+# Editor / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Local database / temp files
+*.sqlite
+*.sqlite3
+tmp/
+
+# Optional: generated certs / local static bundles
+*.pem
