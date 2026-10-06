@@ -264,6 +264,22 @@
   }
   .bottle-abv{font-size:12px; color:var(--cream-dim);}
   .bottle-notes{color:var(--cream-dim); font-size:13px; margin-top:8px;}
+  .bottle-vintage{color:var(--gold); font-weight:600;}
+  .bottle-qty{
+    position:absolute; top:8px; left:8px; z-index:2;
+    background:rgba(23,27,37,0.78); color:var(--cream);
+    font-size:12px; font-weight:700; padding:4px 9px; border-radius:12px;
+  }
+  .bottle-stepper{display:flex; align-items:center; gap:10px; margin-top:12px;}
+  .bottle-stepper button{
+    width:30px; height:30px; border-radius:50%; border:1px solid var(--teal);
+    background:transparent; color:var(--teal); font-size:18px; line-height:1; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .bottle-stepper button:hover:not(:disabled){background:var(--teal); color:var(--bg-deep);}
+  .bottle-stepper button:disabled{opacity:0.35; cursor:default;}
+  .bottle-stepper .qty-label{font-size:13px; color:var(--cream); min-width:64px; text-align:center;}
+  .bottle-purchased{font-size:12px; color:var(--cream-dim); margin-top:8px;}
   .cellar-empty, .cellar-loading{text-align:center; color:var(--cream-dim); padding:40px 20px;}
   .cellar-cta{text-align:center; margin-top:32px;}
   .btn-coral{
@@ -455,6 +471,13 @@
     });
   }
 
+  // "2026-03-14" -> "Mar 14, 2026". Parsed as a local date so it doesn't shift a day in US time zones.
+  function formatDate(iso){
+    var p = String(iso).split('-');
+    var d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    return isNaN(d) ? iso : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
   function render(){
     if (!loaded) return;
     var filtered = activeCat === 'all' ? bottles : bottles.filter(function(b){ return b.category === activeCat; });
@@ -466,22 +489,61 @@
     }
     content.innerHTML = '<div class="bottle-grid">' + filtered.map(function(b){
       return '<div class="bottle-card">' +
+        (!session.authed && b.quantity > 1 ? '<span class="bottle-qty" title="' + b.quantity + ' on hand">&times;' + b.quantity + '</span>' : '') +
         (session.authed ? '<button class="bottle-delete" data-id="' + b.id + '" data-name="' + escapeHtml(b.name) + '" type="button" title="Delete">&times;</button>' : '') +
         (b.photo_url
           ? '<img class="bottle-photo" src="' + escapeHtml(b.photo_url) + '" alt="' + escapeHtml(b.name) + '" loading="lazy">'
           : '<div class="bottle-photo-placeholder">&#127866;</div>') +
         '<div class="bottle-info">' +
-          '<div class="bottle-name">' + escapeHtml(b.name) + '</div>' +
+          '<div class="bottle-name">' + escapeHtml(b.name) + (b.vintage ? ' <span class="bottle-vintage">' + escapeHtml(b.vintage) + '</span>' : '') + '</div>' +
           (b.maker ? '<div class="bottle-maker">' + escapeHtml(b.maker) + '</div>' : '') +
           '<div class="bottle-meta">' +
             '<span class="bottle-cat">' + (CATEGORY_LABELS[b.category] || b.category) + '</span>' +
             (b.abv ? '<span class="bottle-abv">' + escapeHtml(b.abv) + '% ABV</span>' : '') +
           '</div>' +
           (b.notes ? '<div class="bottle-notes">' + escapeHtml(b.notes) + '</div>' : '') +
+          (session.authed
+            ? '<div class="bottle-stepper">' +
+                '<button type="button" class="qty-btn" data-id="' + b.id + '" data-delta="-1" title="' + (b.quantity > 1 ? 'One fewer' : 'Use &times; to remove the last one') + '"' + (b.quantity > 1 ? '' : ' disabled') + '>&minus;</button>' +
+                '<span class="qty-label">' + b.quantity + ' on hand</span>' +
+                '<button type="button" class="qty-btn" data-id="' + b.id + '" data-delta="1" title="One more">+</button>' +
+              '</div>'
+            : '') +
+          (session.authed && b.purchased_on ? '<div class="bottle-purchased">Purchased ' + escapeHtml(formatDate(b.purchased_on)) + '</div>' : '') +
         '</div>' +
       '</div>';
     }).join('') + '</div>';
   }
+
+  content.addEventListener('click', function(e){
+    var qtyBtn = e.target.closest('.qty-btn');
+    if (!qtyBtn) return;
+    var bottle = bottles.find(function(b){ return String(b.id) === qtyBtn.dataset.id; });
+    if (!bottle) return;
+    var next = bottle.quantity + Number(qtyBtn.dataset.delta);
+    if (next < 1) return;
+    // Lock this card's stepper until the server answers, so fast taps can't race each other.
+    var stepperBtns = qtyBtn.parentNode.querySelectorAll('button');
+    stepperBtns.forEach(function(btn){ btn.disabled = true; });
+    fetch('/api/bottles/' + encodeURIComponent(bottle.id), {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ quantity: next })
+    }).then(function(r){
+      return r.json().then(function(data){ return { ok: r.ok, status: r.status, data: data }; });
+    }).then(function(res){
+      if (res.ok) {
+        bottle.quantity = res.data.quantity;
+      } else if (res.status === 401) {
+        setSession({ authed: false });
+        alert('Your sign-in expired — sign in again to update bottles.');
+      } else {
+        alert((res.data && res.data.error) || 'Could not update that bottle.');
+      }
+    }).catch(function(){
+      alert('Could not update that bottle — try again.');
+    }).then(render);
+  });
 
   content.addEventListener('click', function(e){
     var delBtn = e.target.closest('.bottle-delete');

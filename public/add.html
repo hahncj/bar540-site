@@ -27,6 +27,8 @@
     border-radius:10px; padding:12px 14px; font-size:15px; font-family:inherit;
   }
   textarea{resize:vertical; min-height:70px;}
+  .row{display:flex; gap:12px;}
+  .row > div{flex:1; min-width:0;}
   .btn{
     display:block; width:100%; background:var(--coral); color:#fff; border:none;
     font-family:'Fredoka',sans-serif; font-weight:600; font-size:16px;
@@ -43,6 +45,15 @@
   #status.ok{color:var(--teal);}
   #status.err{color:var(--coral);}
   #lookupStatus{font-size:13px; color:var(--cream-dim); margin-top:8px; text-align:center;}
+  .photo-preview{
+    display:none; background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:12px; text-align:center;
+  }
+  .photo-preview img{max-width:100%; max-height:240px; border-radius:8px; display:block; margin:0 auto;}
+  .photo-preview .caption{font-size:12px; color:var(--cream-dim); margin-top:8px;}
+  .photo-actions{display:flex; gap:10px;}
+  .photo-actions .btn-secondary{flex:1;}
+  .linkish{background:none; border:none; color:var(--teal); font:inherit; font-size:13px; text-decoration:underline; cursor:pointer; margin-top:8px; display:none;}
   .success-panel{
     text-align:center; background:var(--panel); border:2px solid var(--teal);
     border-radius:16px; padding:36px 24px; margin-top:20px; display:none;
@@ -68,7 +79,7 @@
 
   <form id="bottleForm">
     <label>Category</label>
-    <select name="category" required>
+    <select name="category" id="categorySelect" required>
       <option value="">Choose one&hellip;</option>
       <option value="whiskey">Whiskey</option>
       <option value="wine">Wine</option>
@@ -81,14 +92,43 @@
     <label>Maker / Distillery / Winery</label>
     <input type="text" name="maker" placeholder="e.g. Woodford Reserve Distillery">
 
-    <label>ABV %</label>
-    <input type="number" step="0.1" name="abv" placeholder="45">
+    <div class="row">
+      <div>
+        <label>ABV %</label>
+        <input type="number" step="0.1" name="abv" placeholder="45">
+      </div>
+      <div id="vintageField" hidden>
+        <label>Vintage</label>
+        <input type="number" name="vintage" min="1800" max="2100" step="1" placeholder="2019">
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Quantity</label>
+        <input type="number" name="quantity" min="1" step="1" value="1" required>
+      </div>
+      <div>
+        <label>Purchased</label>
+        <input type="date" name="purchased_on">
+      </div>
+    </div>
 
     <label>Notes</label>
     <textarea name="notes" placeholder="Tasting notes, where it's from, why it's here..."></textarea>
 
     <label>Photo</label>
-    <input type="file" name="photo" accept="image/*">
+    <div class="photo-preview" id="photoPreview">
+      <img id="photoPreviewImg" alt="Bottle photo preview">
+      <div class="caption" id="photoCaption"></div>
+    </div>
+    <div class="photo-actions">
+      <button type="button" class="btn-secondary" id="takePhotoBtn">Take Photo</button>
+      <button type="button" class="btn-secondary" id="choosePhotoBtn">Choose Photo</button>
+    </div>
+    <button type="button" class="linkish" id="useStockBtn">Use stock photo instead</button>
+    <input type="file" name="photo" id="photoInput" accept="image/*" hidden>
+    <input type="hidden" name="stock_image_url" id="stockImageUrl">
 
     <button type="submit" class="btn">Add to the Cellar</button>
   </form>
@@ -115,6 +155,81 @@
   var scannerDiv = document.getElementById('scanner');
   var lookupStatus = document.getElementById('lookupStatus');
   var html5QrCode;
+
+  // Vintage only applies to wine; clear it when switching away so it isn't saved by accident.
+  var vintageField = document.getElementById('vintageField');
+  document.getElementById('categorySelect').addEventListener('change', function(){
+    vintageField.hidden = this.value !== 'wine';
+    if (vintageField.hidden) form.vintage.value = '';
+  });
+
+  // --- Photo: stock image from the barcode lookup is the default; camera/library overrides it ---
+  var photoInput = document.getElementById('photoInput');
+  var stockImageUrl = document.getElementById('stockImageUrl');
+  var photoPreview = document.getElementById('photoPreview');
+  var photoPreviewImg = document.getElementById('photoPreviewImg');
+  var photoCaption = document.getElementById('photoCaption');
+  var useStockBtn = document.getElementById('useStockBtn');
+  var stockUrl = null;   // the stock image that loaded successfully, if any
+  var previewObjectUrl = null;
+
+  function showPreview(src, caption){
+    photoPreviewImg.src = src;
+    photoCaption.textContent = caption;
+    photoPreview.style.display = 'block';
+  }
+
+  function useStockPhoto(){
+    photoInput.value = '';
+    stockImageUrl.value = stockUrl;
+    showPreview(stockUrl, 'Stock photo from barcode lookup');
+    useStockBtn.style.display = 'none';
+  }
+
+  // Forget any stock photo from a previous scan (a user-picked photo stays put).
+  function clearStockImage(){
+    stockUrl = null;
+    stockImageUrl.value = '';
+    useStockBtn.style.display = 'none';
+    if (!photoInput.files.length) photoPreview.style.display = 'none';
+  }
+
+  // Try each candidate image in turn and keep the first one that actually loads.
+  function loadStockImage(urls){
+    var i = 0;
+    (function tryNext(){
+      if (i >= urls.length) return;
+      var url = urls[i++];
+      var probe = new Image();
+      probe.onload = function(){
+        stockUrl = url;
+        if (photoInput.files.length) useStockBtn.style.display = 'inline-block';
+        else useStockPhoto();
+      };
+      probe.onerror = tryNext;
+      probe.src = url;
+    })();
+  }
+
+  document.getElementById('takePhotoBtn').addEventListener('click', function(){
+    photoInput.setAttribute('capture', 'environment');
+    photoInput.click();
+  });
+  document.getElementById('choosePhotoBtn').addEventListener('click', function(){
+    photoInput.removeAttribute('capture');
+    photoInput.click();
+  });
+  useStockBtn.addEventListener('click', useStockPhoto);
+
+  photoInput.addEventListener('change', function(){
+    var file = photoInput.files[0];
+    if (!file) return;
+    if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+    previewObjectUrl = URL.createObjectURL(file);
+    stockImageUrl.value = '';
+    showPreview(previewObjectUrl, 'Your photo');
+    useStockBtn.style.display = stockUrl ? 'inline-block' : 'none';
+  });
 
   scanBtn.addEventListener('click', async function(){
     if (scannerDiv.style.display === 'block') {
@@ -152,6 +267,7 @@
   async function onScanSuccess(decodedText){
     await stopScanner();
     lookupStatus.textContent = 'Looking up ' + decodedText + '...';
+    clearStockImage();
     try {
       var res = await fetch('/api/lookup?upc=' + encodeURIComponent(decodedText));
       var data = await res.json();
@@ -159,6 +275,7 @@
         if (data.title) form.name.value = data.title;
         if (data.brand) form.maker.value = data.brand;
         if (data.description) form.notes.value = data.description;
+        if (data.images && data.images.length) loadStockImage(data.images);
         lookupStatus.textContent = 'Found a match — double check the details below.';
       } else {
         lookupStatus.textContent = "No match found for that barcode — fill in the details manually.";

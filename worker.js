@@ -14,6 +14,29 @@ function jsonError(message, status) {
   });
 }
 
+const MAX_STOCK_IMAGE_BYTES = 5 * 1024 * 1024;
+const IMAGE_EXTS = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
+
+async function storePhoto(env, bytes, contentType, ext) {
+  const key = `${crypto.randomUUID()}.${ext}`;
+  await env.PHOTOS.put(key, bytes, { httpMetadata: { contentType } });
+  return `/photos/${key}`;
+}
+
+// Download a stock product image. Returns null unless it's a reasonably sized image over http(s).
+async function fetchStockImage(rawUrl) {
+  const src = new URL(rawUrl);
+  if (src.protocol !== "https:" && src.protocol !== "http:") return null;
+  const resp = await fetch(src.toString(), { redirect: "follow" });
+  if (!resp.ok) return null;
+  const contentType = (resp.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+  const ext = IMAGE_EXTS[contentType];
+  if (!ext) return null;
+  const bytes = await resp.arrayBuffer();
+  if (bytes.byteLength === 0 || bytes.byteLength > MAX_STOCK_IMAGE_BYTES) return null;
+  return { bytes, contentType, ext };
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -62,7 +85,7 @@ export default {
     // --- List bottles ---
     if (url.pathname === "/api/bottles" && request.method === "GET") {
       const { results } = await env.DB.prepare(
-        "SELECT id, category, name, maker, notes, abv, photo_url, added_at FROM bottles ORDER BY category, name"
+        "SELECT id, category, name, maker, notes, abv, photo_url, added_at, purchased_on, vintage, quantity FROM bottles ORDER BY category, name"
       ).all();
       return Response.json(results);
     }
@@ -86,6 +109,11 @@ export default {
       const notes = form.get("notes") || null;
       const abvRaw = form.get("abv");
       const abv = abvRaw ? Number(abvRaw) : null;
+      const purchasedOn = form.get("purchased_on") || null;
+      const vintageRaw = form.get("vintage");
+      const vintage = vintageRaw && category === "wine" ? Number(vintageRaw) : null;
+      const quantityRaw = form.get("quantity");
+      const quantity = quantityRaw ? Number(quantityRaw) : 1;
 
       if (!category || !name) {
         return new Response(JSON.stringify({ error: "Category and name are required" }), {
@@ -94,23 +122,48 @@ export default {
         });
       }
 
+      // An uploaded photo wins; otherwise fall back to the stock image from the barcode lookup.
+      if (purchasedOn && !/^\d{4}-\d{2}-\d{2}$/.test(purchasedOn)) return jsonError("Purchase date must be YYYY-MM-DD", 400);
+      if (vintage !== null && !(Number.isInteger(vintage) && vintage >= 1800 && vintage <= 2100)) return jsonError("Vintage must be a year", 400);
+      if (!(Number.isInteger(quantity) && quantity >= 1)) return jsonError("Quantity must be a whole number of 1 or more", 400);
+
       let photo_url = null;
       const photo = form.get("photo");
       if (photo && typeof photo === "object" && photo.size > 0) {
         const nameParts = (photo.name || "bottle.jpg").split(".");
         const ext = (nameParts.length > 1 ? nameParts.pop() : "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
-        const key = `${crypto.randomUUID()}.${ext}`;
-        await env.PHOTOS.put(key, await photo.arrayBuffer(), {
-          httpMetadata: { contentType: photo.type || "image/jpeg" },
-        });
-        photo_url = `/photos/${key}`;
+        photo_url = await storePhoto(env, await photo.arrayBuffer(), photo.type || "image/jpeg", ext);
+      } else if (form.get("stock_image_url")) {
+        // Copy it into R2 so the cellar doesn't depend on a third-party URL staying alive.
+        // Best effort: if the download fails, the bottle is still saved, just without a photo.
+        try {
+          const stock = await fetchStockImage(form.get("stock_image_url"));
+          if (stock) photo_url = await storePhoto(env, stock.bytes, stock.contentType, stock.ext);
+        } catch (e) {}
       }
 
       await env.DB.prepare(
-        "INSERT INTO bottles (category, name, maker, notes, abv, photo_url) VALUES (?, ?, ?, ?, ?, ?)"
-      ).bind(category, name, maker, notes, abv, photo_url).run();
+        "INSERT INTO bottles (category, name, maker, notes, abv, photo_url, purchased_on, vintage, quantity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).bind(category, name, maker, notes, abv, photo_url, purchasedOn, vintage, quantity).run();
 
       return Response.json({ ok: true });
+    }
+
+    // --- Change how many of a bottle are on hand ---
+    if (url.pathname.startsWith("/api/bottles/") && request.method === "PATCH") {
+      if (!session) return jsonError("Sign in to update bottles", 401);
+      const id = url.pathname.replace("/api/bottles/", "");
+      let body = {};
+      try {
+        body = await request.json();
+      } catch (e) {}
+      const quantity = Number(body.quantity);
+      if (!(Number.isInteger(quantity) && quantity >= 1)) return jsonError("Quantity must be a whole number of 1 or more", 400);
+
+      const row = await env.DB.prepare("UPDATE bottles SET quantity = ? WHERE id = ? RETURNING id, quantity")
+        .bind(quantity, id).first();
+      if (!row) return jsonError("That bottle isn't in the Cellar", 404);
+      return Response.json(row);
     }
 
     // --- Delete a bottle ---
@@ -158,7 +211,7 @@ export default {
           title: item?.title || null,
           brand: item?.brand || null,
           description: item?.description || null,
-          image: item?.images?.[0] || null,
+          images: (item?.images || []).filter((u) => /^https?:\/\//i.test(u)),
         });
       } catch (e) {
         return Response.json({ found: false, error: "Lookup service unavailable" });
