@@ -3,3 +3,6 @@
 # Only needed if you switch to plain env vars (e.g. running outside Cloudflare).
 ALLOWED_EMAILS=you@gmail.com
 SESSION_SECRET=change-me
+# Token the kegerator sensors send as `Authorization: Bearer <token>` to POST /api/sensors.
+# Optional: without it, only a signed-in admin can record readings. Generate with: openssl rand -hex 24
+SENSOR_TOKEN=change-me

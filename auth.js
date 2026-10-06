@@ -26,6 +26,23 @@ export async function readSecret(value) {
   return typeof value === "string" ? value : await value.get();
 }
 
+// True when the request carries `Authorization: Bearer <expected>`. For devices (sensors) that can't do Google sign-in.
+export async function hasBearerToken(request, expected) {
+  if (!expected) return false;
+  const match = /^Bearer\s+(.+)$/i.exec(request.headers.get("authorization") || "");
+  if (!match) return false;
+  // Compare digests so the check takes the same time however much of the token matches.
+  const enc = new TextEncoder();
+  const [a, b] = await Promise.all(
+    [match[1].trim(), expected].map((s) => crypto.subtle.digest("SHA-256", enc.encode(s)))
+  );
+  const x = new Uint8Array(a);
+  const y = new Uint8Array(b);
+  let diff = 0;
+  for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
+  return diff === 0;
+}
+
 export function allowedEmails(raw) {
   return (raw || "")
     .split(",")

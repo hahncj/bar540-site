@@ -25,7 +25,7 @@ There are no tests and no lint config.
 
 A single Cloudflare Worker (`worker.js`) fronts everything. Its `fetch` handler is a flat `if`-ladder router; anything that doesn't match an API/photo route falls through to `env.ASSETS.fetch(request)`, which serves the static files in `public/`.
 
-- `worker.js` — the backend. Routes: `GET/POST /api/bottles`, `DELETE /api/bottles/:id`, `GET /photos/:key`, `GET /api/lookup?upc=`, `GET /api/session`, `POST /api/login`, `POST /api/logout`.
+- `worker.js` — the backend. Routes: `GET/POST /api/bottles`, `DELETE /api/bottles/:id`, `GET /api/taps`, `PUT /api/taps/:id`, `GET/POST /api/sensors`, `GET /photos/:key`, `GET /api/lookup?upc=`, `GET /api/session`, `POST /api/login`, `POST /api/logout`.
 - `auth.js` — portable (Web Crypto only) Google ID-token verification and HMAC-signed session cookies.
 - `public/index.html` — main site. The Cellar section fetches `/api/bottles` and `/api/session`; the Add button and per-card delete buttons render only when signed in. Footer has the sign-in/out link.
 - `public/login.html` — "Sign in with Google" (Google Identity Services); POSTs the ID token to `/api/login`.
@@ -39,5 +39,6 @@ Data flow: bottle metadata lives in **D1** (`bottles` table); photos go to the *
 - **Auth is a session cookie** (`bar540_session`, HttpOnly, SameSite=Strict, 30 days). POST and DELETE check it server-side; hiding admin UI is cosmetic. Removing an email from `ALLOWED_EMAILS` revokes it on the next request; rotating `SESSION_SECRET` signs everyone out.
 - **Local dev reads Secrets Store bindings from the *local* store, not `.dev.vars`.** Populate it with `npx wrangler secrets-store secret create d7e39048e9b14ecbac44deb7b163e132 --name session-secret --scopes workers` (likewise `allowed-emails`); add `--remote` only to change production.
 - **POST uses `multipart/form-data`** (because of the photo upload), read via `request.formData()`. Deleting a bottle also deletes its R2 photo.
+- **`POST /api/sensors` takes a session *or* `Authorization: Bearer <SENSOR_TOKEN>`** (a plain Worker secret, `npx wrangler secret put SENSOR_TOKEN`), since sensors can't do Google sign-in. Body is a flat JSON object of readings; only keys in `SENSORS` in `worker.js` are accepted, and `tapN_level_pct` also updates that tap's `level_pct`.
 - **`bottles.category` is constrained** to `'whiskey' | 'wine' | 'beer'` by a CHECK; inserts outside that set will fail.
 - **Don't Read `public/index.html` whole** if it's carrying base64-embedded images — it can be very large. Use Grep with context or targeted Edits.

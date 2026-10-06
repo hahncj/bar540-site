@@ -2,6 +2,7 @@ import {
   allowedEmails,
   clearSessionCookie,
   createSessionCookie,
+  hasBearerToken,
   readSecret,
   readSession,
   verifyGoogleIdToken,
@@ -13,6 +14,15 @@ function jsonError(message, status) {
     headers: { "content-type": "application/json" },
   });
 }
+
+// Readings the kegerator can report, with the range a sane value falls in.
+// A tapN_level_pct reading also sets that tap's keg level.
+const SENSORS = {
+  fridge_temp_f: [-20, 120],
+  tap1_level_pct: [0, 100],
+  tap2_level_pct: [0, 100],
+};
+const SENSOR_HISTORY_DAYS = 90;
 
 const MAX_STOCK_IMAGE_BYTES = 5 * 1024 * 1024;
 const IMAGE_EXTS = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
@@ -178,6 +188,94 @@ export default {
       }
       await env.DB.prepare("DELETE FROM bottles WHERE id = ?").bind(id).run();
       return Response.json({ ok: true });
+    }
+
+    // --- What's on tap ---
+    if (url.pathname === "/api/taps" && request.method === "GET") {
+      const { results } = await env.DB.prepare(
+        "SELECT id, status, beer, brewery, style, abv, level_pct, tapped_on, updated_at FROM taps ORDER BY id"
+      ).all();
+      return Response.json(results);
+    }
+
+    // --- Change a keg (or mark a tap out) ---
+    if (url.pathname.startsWith("/api/taps/") && request.method === "PUT") {
+      if (!session) return jsonError("Sign in to update the taps", 401);
+      const id = url.pathname.replace("/api/taps/", "");
+      let body = {};
+      try {
+        body = await request.json();
+      } catch (e) {}
+
+      const text = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
+      const num = (v) => (v === null || v === undefined || v === "" ? null : Number(v));
+      const status = body.status;
+      const beer = text(body.beer);
+      const brewery = text(body.brewery);
+      const style = text(body.style);
+      const abv = num(body.abv);
+      const levelPct = num(body.level_pct);
+      const tappedOn = text(body.tapped_on);
+
+      if (status !== "pouring" && status !== "empty") return jsonError("Status must be pouring or empty", 400);
+      if (status === "pouring" && !beer) return jsonError("Name the beer that's pouring", 400);
+      if (abv !== null && !(abv >= 0 && abv <= 100)) return jsonError("ABV must be between 0 and 100", 400);
+      if (levelPct !== null && !(Number.isInteger(levelPct) && levelPct >= 0 && levelPct <= 100)) return jsonError("Keg level must be a whole percent from 0 to 100", 400);
+      if (tappedOn && !/^\d{4}-\d{2}-\d{2}$/.test(tappedOn)) return jsonError("Tapped date must be YYYY-MM-DD", 400);
+
+      const row = await env.DB.prepare(
+        "UPDATE taps SET status = ?, beer = ?, brewery = ?, style = ?, abv = ?, level_pct = ?, tapped_on = ?, updated_at = CURRENT_TIMESTAMP " +
+        "WHERE id = ? RETURNING id, status, beer, brewery, style, abv, level_pct, tapped_on, updated_at"
+      ).bind(status, beer, brewery, style, abv, levelPct, tappedOn, id).first();
+      if (!row) return jsonError("There's no tap " + id, 404);
+      return Response.json(row);
+    }
+
+    // --- Latest kegerator readings: { sensor: { value, recorded_at } } ---
+    if (url.pathname === "/api/sensors" && request.method === "GET") {
+      const { results } = await env.DB.prepare(
+        "SELECT sensor, value, recorded_at FROM sensor_readings WHERE id IN (SELECT MAX(id) FROM sensor_readings GROUP BY sensor)"
+      ).all();
+      const latest = {};
+      for (const r of results) latest[r.sensor] = { value: r.value, recorded_at: r.recorded_at };
+      return Response.json(latest);
+    }
+
+    // --- Record readings, e.g. {"fridge_temp_f": 37.2, "tap1_level_pct": 60} ---
+    // Sensors authenticate with `Authorization: Bearer <SENSOR_TOKEN>`; a signed-in admin can post by hand.
+    if (url.pathname === "/api/sensors" && request.method === "POST") {
+      if (!session && !(await hasBearerToken(request, await readSecret(env.SENSOR_TOKEN)))) {
+        return jsonError("Sign in or send a sensor token to record readings", 401);
+      }
+      let body = null;
+      try {
+        body = await request.json();
+      } catch (e) {}
+      if (!body || typeof body !== "object" || Array.isArray(body)) return jsonError("Send a JSON object of readings", 400);
+
+      const entries = Object.entries(body);
+      if (!entries.length) return jsonError("No readings sent", 400);
+      for (const [sensor, value] of entries) {
+        const range = SENSORS[sensor];
+        if (!range) return jsonError(`Unknown sensor: ${sensor}`, 400);
+        if (typeof value !== "number" || !(value >= range[0] && value <= range[1])) {
+          return jsonError(`${sensor} must be a number from ${range[0]} to ${range[1]}`, 400);
+        }
+      }
+
+      const cutoff = new Date(Date.now() - SENSOR_HISTORY_DAYS * 86400000).toISOString().slice(0, 19).replace("T", " ");
+      const statements = [env.DB.prepare("DELETE FROM sensor_readings WHERE recorded_at < ?").bind(cutoff)];
+      for (const [sensor, value] of entries) {
+        statements.push(env.DB.prepare("INSERT INTO sensor_readings (sensor, value) VALUES (?, ?)").bind(sensor, value));
+        const tap = /^tap(\d)_level_pct$/.exec(sensor);
+        if (tap) {
+          statements.push(
+            env.DB.prepare("UPDATE taps SET level_pct = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(Math.round(value), Number(tap[1]))
+          );
+        }
+      }
+      await env.DB.batch(statements);
+      return Response.json({ ok: true, recorded: entries.map(([sensor]) => sensor) });
     }
 
     // --- Serve a stored photo ---
