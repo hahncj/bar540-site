@@ -7,7 +7,7 @@
 <meta name="description" content="Bar 540 — Est. 2012. The family home bar. Time to relax.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;500;600;700&family=Caveat:wght@600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;500;600;700&family=Caveat:wght@600;700&family=IM+Fell+English:ital@0;1&family=IM+Fell+English+SC&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg: #1d2330;
@@ -239,38 +239,91 @@
     padding:8px 16px; border-radius:20px; cursor:pointer;
   }
   .filter-pill.active{background:var(--teal); border-color:var(--teal); color:var(--bg-deep);}
-  .bottle-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(220px,1fr)); gap:18px;}
-  .bottle-card{background:var(--panel); border-radius:12px; overflow:hidden; border:1px solid var(--line); position:relative;}
-  .bottle-delete{
-    position:absolute; top:8px; right:8px; z-index:2;
-    width:28px; height:28px; border-radius:50%; border:none;
+  /* Drink list: the cellar as a rustic paper menu */
+  .menu-board{
+    position:relative;
+    background:
+      radial-gradient(ellipse at 15% 0%, rgba(255,255,255,0.4), transparent 55%),
+      radial-gradient(ellipse at 100% 100%, rgba(120,80,30,0.2), transparent 60%),
+      #efe4cc;
+    color:#2e2416;
+    border-radius:6px;
+    padding:48px clamp(20px,6vw,60px) 44px;
+    box-shadow:0 18px 40px rgba(0,0,0,0.45), inset 0 0 70px rgba(120,80,30,0.28);
+    font-family:'IM Fell English', Georgia, serif;
+  }
+  .menu-board::before{
+    content:''; position:absolute; inset:12px; pointer-events:none;
+    border:3px double rgba(46,36,22,0.45); border-radius:3px;
+  }
+  @media (max-width:560px){ .menu-board{margin:0 -14px; padding:40px 26px 36px;} }
+  .menu-section + .menu-section{margin-top:40px;}
+  .menu-section-title{
+    display:flex; align-items:center; gap:16px;
+    font-family:'IM Fell English SC', Georgia, serif; font-weight:400;
+    font-size:clamp(24px,5vw,30px); letter-spacing:0.08em; text-align:center;
+  }
+  .menu-section-title::before, .menu-section-title::after{
+    content:''; flex:1; height:1px; background:currentColor; opacity:0.35;
+  }
+  .menu-section-count{text-align:center; font-style:italic; font-size:14px; color:#6b5a40; margin:2px 0 18px;}
+  .menu-items{columns:2 260px; column-gap:44px;}
+  .menu-item{
+    display:block; width:100%; break-inside:avoid;
+    background:none; border:none; border-radius:4px;
+    padding:7px 8px; margin:0 -8px;
+    font:inherit; color:inherit; text-align:left; cursor:pointer;
+    transition:background .15s;
+  }
+  .menu-item:hover, .menu-item:focus-visible{background:rgba(120,80,30,0.13); outline:none;}
+  .menu-item-line{display:flex; align-items:flex-end; gap:8px;}
+  .menu-item-name{font-size:18px; line-height:1.3;}
+  .menu-item-vintage{color:#8a4b1e;}
+  .menu-item-leader{flex:1; min-width:16px; border-bottom:2px dotted rgba(46,36,22,0.35); transform:translateY(-5px);}
+  .menu-item-abv{font-size:15px; white-space:nowrap;}
+  .menu-item-sub{display:block; font-style:italic; font-size:14px; color:#6b5a40; line-height:1.35;}
+
+  /* Bottle detail dialog */
+  .bottle-dialog{
+    margin:auto; padding:0; border:1px solid var(--line); border-radius:14px;
+    width:min(440px, calc(100vw - 32px)); max-height:calc(100dvh - 32px); overflow-y:auto;
+    background:var(--panel); color:var(--cream);
+    box-shadow:0 24px 60px rgba(0,0,0,0.6);
+  }
+  .bottle-dialog::backdrop{background:rgba(10,12,18,0.72); backdrop-filter:blur(3px);}
+  .bottle-dialog-close{
+    position:absolute; top:10px; right:10px; z-index:2;
+    width:32px; height:32px; border-radius:50%; border:none;
     background:rgba(23,27,37,0.78); color:var(--cream);
-    font-size:15px; line-height:1; cursor:pointer;
+    font-size:18px; line-height:1; cursor:pointer;
     display:flex; align-items:center; justify-content:center;
   }
-  .bottle-delete:hover{background:var(--coral);}
-  .bottle-photo{width:100%; aspect-ratio:4/3; object-fit:cover; background:var(--bg); display:block;}
+  .bottle-dialog-close:hover{background:var(--teal); color:var(--bg-deep);}
+  .bottle-photo{width:100%; max-height:340px; object-fit:contain; background:var(--bg-deep); display:block;}
   .bottle-photo-placeholder{
-    width:100%; aspect-ratio:4/3; background:var(--bg);
-    display:flex; align-items:center; justify-content:center; font-size:28px;
+    width:100%; aspect-ratio:3/1; background:var(--bg-deep);
+    display:flex; align-items:center; justify-content:center; font-size:44px;
   }
-  .bottle-info{padding:14px 16px;}
-  .bottle-name{font-family:'Fredoka',sans-serif; font-weight:600; font-size:16px; color:var(--cream);}
-  .bottle-maker{color:var(--cream-dim); font-size:13px; margin-top:2px;}
-  .bottle-meta{display:flex; justify-content:space-between; align-items:center; margin-top:10px;}
+  .bottle-info{padding:18px 22px 22px;}
   .bottle-cat{
-    font-size:10px; font-weight:700; letter-spacing:0.05em; text-transform:uppercase;
+    font-size:11px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase;
     color:var(--gold);
   }
-  .bottle-abv{font-size:12px; color:var(--cream-dim);}
-  .bottle-notes{color:var(--cream-dim); font-size:13px; margin-top:8px;}
+  .bottle-name{font-family:'Fredoka',sans-serif; font-weight:600; font-size:22px; line-height:1.25; color:var(--cream); margin-top:2px;}
   .bottle-vintage{color:var(--gold); font-weight:600;}
-  .bottle-qty{
-    position:absolute; top:8px; left:8px; z-index:2;
-    background:rgba(23,27,37,0.78); color:var(--cream);
-    font-size:12px; font-weight:700; padding:4px 9px; border-radius:12px;
+  .bottle-maker{color:var(--cream-dim); font-size:14px; margin-top:2px;}
+  .bottle-facts{display:flex; flex-wrap:wrap; gap:8px; margin-top:14px;}
+  .bottle-facts span{
+    background:var(--bg); border:1px solid var(--line); border-radius:20px;
+    font-size:12px; font-weight:600; color:var(--cream-dim); padding:4px 12px;
   }
-  .bottle-stepper{display:flex; align-items:center; gap:10px; margin-top:12px;}
+  .bottle-notes-head{
+    margin-top:18px; font-size:11px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:var(--teal);
+  }
+  .bottle-notes{color:var(--cream); font-size:14.5px; margin-top:4px; white-space:pre-line;}
+  .bottle-notes.empty{color:var(--cream-dim); font-style:italic;}
+  .bottle-admin{margin-top:20px; padding-top:16px; border-top:1px solid var(--line);}
+  .bottle-stepper{display:flex; align-items:center; gap:10px;}
   .bottle-stepper button{
     width:30px; height:30px; border-radius:50%; border:1px solid var(--teal);
     background:transparent; color:var(--teal); font-size:18px; line-height:1; cursor:pointer;
@@ -279,7 +332,13 @@
   .bottle-stepper button:hover:not(:disabled){background:var(--teal); color:var(--bg-deep);}
   .bottle-stepper button:disabled{opacity:0.35; cursor:default;}
   .bottle-stepper .qty-label{font-size:13px; color:var(--cream); min-width:64px; text-align:center;}
-  .bottle-purchased{font-size:12px; color:var(--cream-dim); margin-top:8px;}
+  .bottle-purchased{font-size:12px; color:var(--cream-dim); margin-top:10px;}
+  .bottle-delete{
+    margin-top:14px; font:inherit; font-size:12px; font-weight:600;
+    background:none; color:var(--coral); border:1px solid var(--coral); border-radius:20px;
+    padding:6px 14px; cursor:pointer;
+  }
+  .bottle-delete:hover{background:var(--coral); color:#fff;}
   .cellar-empty, .cellar-loading{text-align:center; color:var(--cream-dim); padding:40px 20px;}
   .cellar-cta{text-align:center; margin-top:32px;}
   .btn-coral{
@@ -455,11 +514,21 @@
   </div>
 </section>
 
+<dialog class="bottle-dialog" id="bottleDialog" aria-label="Bottle details">
+  <button class="bottle-dialog-close" type="button" aria-label="Close">&times;</button>
+  <div id="bottleDetail"></div>
+</dialog>
+
 <script>
 (function(){
   var CATEGORY_LABELS = { whiskey: 'Whiskey', wine: 'Wine', beer: 'Specialty Beer' };
+  var CATEGORY_ORDER = ['whiskey', 'wine', 'beer'];
+  var CATEGORY_ICONS = { whiskey: '&#129347;', wine: '&#127863;', beer: '&#127866;' };
   var content = document.getElementById('cellarContent');
   var filters = document.getElementById('cellarFilters');
+  var dialog = document.getElementById('bottleDialog');
+  var detail = document.getElementById('bottleDetail');
+  var openId = null; // bottle shown in the detail dialog, if any
   var bottles = [];
   var activeCat = 'all';
   var session = { authed: false };
@@ -478,51 +547,100 @@
     return isNaN(d) ? iso : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
+  function findBottle(id){
+    return bottles.find(function(b){ return String(b.id) === String(id); });
+  }
+
+  function menuItem(b){
+    var sub = [];
+    if (b.maker) sub.push(escapeHtml(b.maker));
+    if (b.quantity > 1) sub.push('&times;' + b.quantity);
+    return '<button type="button" class="menu-item" data-id="' + b.id + '">' +
+      '<span class="menu-item-line">' +
+        '<span class="menu-item-name">' + escapeHtml(b.name) +
+          (b.vintage ? ' <span class="menu-item-vintage">' + escapeHtml(b.vintage) + '</span>' : '') + '</span>' +
+        (b.abv ? '<span class="menu-item-leader"></span><span class="menu-item-abv">' + escapeHtml(b.abv) + '%</span>' : '') +
+      '</span>' +
+      (sub.length ? '<span class="menu-item-sub">' + sub.join(' &middot; ') + '</span>' : '') +
+    '</button>';
+  }
+
   function render(){
     if (!loaded) return;
-    var filtered = activeCat === 'all' ? bottles : bottles.filter(function(b){ return b.category === activeCat; });
-    if (!filtered.length){
-      content.innerHTML = '<div class="cellar-empty">' +
-        (bottles.length ? 'Nothing in this category yet.' : 'The cellar is empty so far' + (session.authed ? ' &mdash; add the first bottle below.' : '.')) +
+    var cats = activeCat === 'all' ? CATEGORY_ORDER : [activeCat];
+    var sections = cats.map(function(cat){
+      var items = bottles.filter(function(b){ return b.category === cat; });
+      if (!items.length) return '';
+      return '<div class="menu-section">' +
+        '<h3 class="menu-section-title">' + CATEGORY_LABELS[cat] + '</h3>' +
+        '<div class="menu-section-count">' + items.length + (items.length === 1 ? ' selection' : ' selections') + '</div>' +
+        '<div class="menu-items">' + items.map(menuItem).join('') + '</div>' +
+      '</div>';
+    }).join('');
+    content.innerHTML = sections
+      ? '<div class="menu-board">' + sections + '</div>'
+      : '<div class="cellar-empty">' +
+          (bottles.length ? 'Nothing in this category yet.' : 'The cellar is empty so far' + (session.authed ? ' &mdash; add the first bottle below.' : '.')) +
         '</div>';
-      return;
-    }
-    content.innerHTML = '<div class="bottle-grid">' + filtered.map(function(b){
-      return '<div class="bottle-card">' +
-        (!session.authed && b.quantity > 1 ? '<span class="bottle-qty" title="' + b.quantity + ' on hand">&times;' + b.quantity + '</span>' : '') +
-        (session.authed ? '<button class="bottle-delete" data-id="' + b.id + '" data-name="' + escapeHtml(b.name) + '" type="button" title="Delete">&times;</button>' : '') +
-        (b.photo_url
-          ? '<img class="bottle-photo" src="' + escapeHtml(b.photo_url) + '" alt="' + escapeHtml(b.name) + '" loading="lazy">'
-          : '<div class="bottle-photo-placeholder">&#127866;</div>') +
-        '<div class="bottle-info">' +
-          '<div class="bottle-name">' + escapeHtml(b.name) + (b.vintage ? ' <span class="bottle-vintage">' + escapeHtml(b.vintage) + '</span>' : '') + '</div>' +
-          (b.maker ? '<div class="bottle-maker">' + escapeHtml(b.maker) + '</div>' : '') +
-          '<div class="bottle-meta">' +
-            '<span class="bottle-cat">' + (CATEGORY_LABELS[b.category] || b.category) + '</span>' +
-            (b.abv ? '<span class="bottle-abv">' + escapeHtml(b.abv) + '% ABV</span>' : '') +
-          '</div>' +
-          (b.notes ? '<div class="bottle-notes">' + escapeHtml(b.notes) + '</div>' : '') +
-          (session.authed
-            ? '<div class="bottle-stepper">' +
-                '<button type="button" class="qty-btn" data-id="' + b.id + '" data-delta="-1" title="' + (b.quantity > 1 ? 'One fewer' : 'Use &times; to remove the last one') + '"' + (b.quantity > 1 ? '' : ' disabled') + '>&minus;</button>' +
+    renderDetail();
+  }
+
+  function renderDetail(){
+    if (openId === null) return;
+    var b = findBottle(openId);
+    if (!b) { dialog.close(); return; }
+    var facts = [];
+    if (b.abv) facts.push(escapeHtml(b.abv) + '% ABV');
+    if (!session.authed && b.quantity > 1) facts.push(b.quantity + ' on hand');
+    detail.innerHTML =
+      (b.photo_url
+        ? '<img class="bottle-photo" src="' + escapeHtml(b.photo_url) + '" alt="' + escapeHtml(b.name) + '">'
+        : '<div class="bottle-photo-placeholder">' + (CATEGORY_ICONS[b.category] || '&#127866;') + '</div>') +
+      '<div class="bottle-info">' +
+        '<div class="bottle-cat">' + (CATEGORY_LABELS[b.category] || b.category) + '</div>' +
+        '<div class="bottle-name">' + escapeHtml(b.name) + (b.vintage ? ' <span class="bottle-vintage">' + escapeHtml(b.vintage) + '</span>' : '') + '</div>' +
+        (b.maker ? '<div class="bottle-maker">' + escapeHtml(b.maker) + '</div>' : '') +
+        (facts.length ? '<div class="bottle-facts"><span>' + facts.join('</span><span>') + '</span></div>' : '') +
+        '<div class="bottle-notes-head">Tasting Notes</div>' +
+        (b.notes
+          ? '<div class="bottle-notes">' + escapeHtml(b.notes) + '</div>'
+          : '<div class="bottle-notes empty">No tasting notes yet.</div>') +
+        (session.authed
+          ? '<div class="bottle-admin">' +
+              '<div class="bottle-stepper">' +
+                '<button type="button" class="qty-btn" data-id="' + b.id + '" data-delta="-1" title="' + (b.quantity > 1 ? 'One fewer' : 'Use Remove to take out the last one') + '"' + (b.quantity > 1 ? '' : ' disabled') + '>&minus;</button>' +
                 '<span class="qty-label">' + b.quantity + ' on hand</span>' +
                 '<button type="button" class="qty-btn" data-id="' + b.id + '" data-delta="1" title="One more">+</button>' +
-              '</div>'
-            : '') +
-          (session.authed && b.purchased_on ? '<div class="bottle-purchased">Purchased ' + escapeHtml(formatDate(b.purchased_on)) + '</div>' : '') +
-        '</div>' +
+              '</div>' +
+              (b.purchased_on ? '<div class="bottle-purchased">Purchased ' + escapeHtml(formatDate(b.purchased_on)) + '</div>' : '') +
+              '<button class="bottle-delete" data-id="' + b.id + '" data-name="' + escapeHtml(b.name) + '" type="button">Remove from the Cellar</button>' +
+            '</div>'
+          : '') +
       '</div>';
-    }).join('') + '</div>';
   }
 
   content.addEventListener('click', function(e){
+    var item = e.target.closest('.menu-item');
+    if (!item) return;
+    openId = item.dataset.id;
+    renderDetail();
+    dialog.showModal();
+    dialog.scrollTop = 0;
+  });
+
+  dialog.addEventListener('close', function(){ openId = null; });
+  dialog.querySelector('.bottle-dialog-close').addEventListener('click', function(){ dialog.close(); });
+  // A click that lands on the dialog element itself (not its content) is a click on the backdrop.
+  dialog.addEventListener('click', function(e){ if (e.target === dialog) dialog.close(); });
+
+  detail.addEventListener('click', function(e){
     var qtyBtn = e.target.closest('.qty-btn');
     if (!qtyBtn) return;
-    var bottle = bottles.find(function(b){ return String(b.id) === qtyBtn.dataset.id; });
+    var bottle = findBottle(qtyBtn.dataset.id);
     if (!bottle) return;
     var next = bottle.quantity + Number(qtyBtn.dataset.delta);
     if (next < 1) return;
-    // Lock this card's stepper until the server answers, so fast taps can't race each other.
+    // Lock the stepper until the server answers, so fast taps can't race each other.
     var stepperBtns = qtyBtn.parentNode.querySelectorAll('button');
     stepperBtns.forEach(function(btn){ btn.disabled = true; });
     fetch('/api/bottles/' + encodeURIComponent(bottle.id), {
@@ -545,7 +663,7 @@
     }).then(render);
   });
 
-  content.addEventListener('click', function(e){
+  detail.addEventListener('click', function(e){
     var delBtn = e.target.closest('.bottle-delete');
     if (!delBtn) return;
     var id = delBtn.dataset.id;
@@ -555,7 +673,7 @@
     }).then(function(res){
       if (res.ok) {
         bottles = bottles.filter(function(b){ return String(b.id) !== String(id); });
-        render();
+        render(); // the bottle is gone, so renderDetail closes the dialog
       } else if (res.status === 401) {
         setSession({ authed: false });
         alert('Your sign-in expired — sign in again to remove bottles.');
