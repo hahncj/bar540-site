@@ -28,6 +28,7 @@ export default {
         authed: !!session,
         email: session?.email || null,
         name: session?.name || null,
+        picture: session?.picture || null,
         googleClientId: env.GOOGLE_CLIENT_ID || null,
       });
     }
@@ -49,7 +50,7 @@ export default {
       const email = String(claims.email).toLowerCase();
       if (!allowed.includes(email)) return jsonError(`${email} isn't on the admin list`, 403);
 
-      const cookie = await createSessionCookie({ email, name: claims.given_name || claims.name }, sessionSecret, secure);
+      const cookie = await createSessionCookie({ email, name: claims.given_name || claims.name, picture: claims.picture }, sessionSecret, secure);
       return Response.json({ ok: true, email }, { headers: { "set-cookie": cookie } });
     }
 

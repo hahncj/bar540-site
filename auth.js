@@ -91,9 +91,19 @@ async function hmacKey(secret) {
   ]);
 }
 
-export async function createSessionCookie({ email, name }, secret, secure) {
+// Only keep avatar URLs that point at Google's image host over https.
+function safePicture(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" && u.hostname.endsWith(".googleusercontent.com") ? u.href : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function createSessionCookie({ email, name, picture }, secret, secure) {
   const payload = bytesToBase64Url(
-    encoder.encode(JSON.stringify({ email, name, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS }))
+    encoder.encode(JSON.stringify({ email, name, picture: safePicture(picture), exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS }))
   );
   const sig = await crypto.subtle.sign("HMAC", await hmacKey(secret), encoder.encode(payload));
   return cookieHeader(`${payload}.${bytesToBase64Url(sig)}`, SESSION_TTL_SECONDS, secure);
@@ -107,7 +117,7 @@ function cookieHeader(value, maxAge, secure) {
   return `${SESSION_COOKIE}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;
 }
 
-// Returns { email, name } for a valid session whose email is still allowlisted, else null.
+// Returns { email, name, picture } for a valid session whose email is still allowlisted, else null.
 export async function readSession(request, secret, allowed) {
   if (!secret) return null;
   const cookie = request.headers.get("cookie") || "";
@@ -128,7 +138,7 @@ export async function readSession(request, secret, allowed) {
     const session = JSON.parse(decoder.decode(base64UrlToBytes(payload)));
     if (!session.exp || session.exp < Math.floor(Date.now() / 1000)) return null;
     if (!allowed.includes(String(session.email).toLowerCase())) return null;
-    return { email: session.email, name: session.name || null };
+    return { email: session.email, name: session.name || null, picture: safePicture(session.picture) };
   } catch (e) {
     return null;
   }
