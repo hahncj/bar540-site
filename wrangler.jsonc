@@ -6,6 +6,18 @@
     "directory": "./public",
     "binding": "ASSETS"
   },
+  "secrets_store_secrets": [
+    {
+      "binding": "ALLOWED_EMAILS",
+      "store_id": "d7e39048e9b14ecbac44deb7b163e132",
+      "secret_name": "allowed-emails"
+    },
+    {
+      "binding": "SESSION_SECRET",
+      "store_id": "d7e39048e9b14ecbac44deb7b163e132",
+      "secret_name": "session-secret"
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
@@ -19,11 +31,9 @@
       "bucket_name": "bar540-photos"
     }
   ],
-  "secrets_store_secrets": [
-    {
-      "binding": "BOTTLE_PASSCODE",
-      "store_id": "d7e39048e9b14ecbac44deb7b163e132",
-      "secret_name": "bottle-passcode"
-    }
-  ]
+  // Public OAuth client ID from Google Cloud Console (not a secret).
+  // ALLOWED_EMAILS and SESSION_SECRET come from the Secrets Store bindings above.
+  "vars": {
+    "GOOGLE_CLIENT_ID": "699811359194-oe61glrsh1kjas73lihil1d3s1fbdldp.apps.googleusercontent.com"
+  }
 }

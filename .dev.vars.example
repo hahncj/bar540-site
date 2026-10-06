@@ -1,0 +1,5 @@
+# Not used while ALLOWED_EMAILS / SESSION_SECRET are Secrets Store bindings in wrangler.jsonc —
+# wrangler dev reads those from its local Secrets Store instead (see CLAUDE.md).
+# Only needed if you switch to plain env vars (e.g. running outside Cloudflare).
+ALLOWED_EMAILS=you@gmail.com
+SESSION_SECRET=change-me

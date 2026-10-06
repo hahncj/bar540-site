@@ -67,9 +67,6 @@
   <div id="lookupStatus"></div>
 
   <form id="bottleForm">
-    <label>Passcode</label>
-    <input type="password" name="passcode" required autocomplete="off">
-
     <label>Category</label>
     <select name="category" required>
       <option value="">Choose one&hellip;</option>
@@ -107,6 +104,11 @@
 
 <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
+  // Admin-only page: bounce to sign-in if there's no session. (The API enforces this too.)
+  fetch('/api/session').then(function(r){ return r.json(); }).then(function(s){
+    if (!s.authed) location.replace('/login.html?next=' + encodeURIComponent('/add.html'));
+  });
+
   var form = document.getElementById('bottleForm');
   var status = document.getElementById('status');
   var scanBtn = document.getElementById('scanBtn');
@@ -181,6 +183,9 @@
         lookupStatus.textContent = '';
         document.getElementById('successPanel').style.display = 'block';
         setTimeout(function(){ window.location.href = '/#cellar'; }, 1400);
+        return;
+      } else if (res.status === 401) {
+        location.href = '/login.html?next=' + encodeURIComponent('/add.html');
         return;
       } else {
         status.className = 'err';

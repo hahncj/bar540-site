@@ -274,6 +274,11 @@
     font-size:13px;
     border-top:1px solid var(--line);
   }
+  .admin-bar{margin-top:14px; font-size:12px;}
+  .admin-bar a, .admin-bar button{
+    color:var(--cream-dim); background:none; border:none; font:inherit;
+    text-decoration:underline; cursor:pointer; padding:0;
+  }
   footer .brand-mini{
     font-family:'Fredoka',sans-serif; font-weight:600;
     color:var(--coral); font-size:14px; display:block; margin-bottom:6px;
@@ -406,7 +411,7 @@
       <div class="cellar-loading">Loading the cellar&hellip;</div>
     </div>
 
-    <div class="cellar-cta">
+    <div class="cellar-cta" id="cellarCta" hidden>
       <a href="/add.html" class="btn-coral">+ Add a Bottle</a>
     </div>
   </div>
@@ -419,6 +424,8 @@
   var filters = document.getElementById('cellarFilters');
   var bottles = [];
   var activeCat = 'all';
+  var session = { authed: false };
+  var loaded = false;
 
   function escapeHtml(s){
     return String(s).replace(/[&<>"']/g, function(c){
@@ -427,16 +434,17 @@
   }
 
   function render(){
+    if (!loaded) return;
     var filtered = activeCat === 'all' ? bottles : bottles.filter(function(b){ return b.category === activeCat; });
     if (!filtered.length){
       content.innerHTML = '<div class="cellar-empty">' +
-        (bottles.length ? 'Nothing in this category yet.' : 'The cellar is empty so far &mdash; add the first bottle below.') +
+        (bottles.length ? 'Nothing in this category yet.' : 'The cellar is empty so far' + (session.authed ? ' &mdash; add the first bottle below.' : '.')) +
         '</div>';
       return;
     }
     content.innerHTML = '<div class="bottle-grid">' + filtered.map(function(b){
       return '<div class="bottle-card">' +
-        '<button class="bottle-delete" data-id="' + b.id + '" type="button" title="Delete">&times;</button>' +
+        (session.authed ? '<button class="bottle-delete" data-id="' + b.id + '" data-name="' + escapeHtml(b.name) + '" type="button" title="Delete">&times;</button>' : '') +
         (b.photo_url
           ? '<img class="bottle-photo" src="' + escapeHtml(b.photo_url) + '" alt="' + escapeHtml(b.name) + '" loading="lazy">'
           : '<div class="bottle-photo-placeholder">&#127866;</div>') +
@@ -457,18 +465,16 @@
     var delBtn = e.target.closest('.bottle-delete');
     if (!delBtn) return;
     var id = delBtn.dataset.id;
-    var passcode = window.prompt('Enter the passcode to delete this bottle:');
-    if (!passcode) return;
-    fetch('/api/bottles/' + encodeURIComponent(id), {
-      method: 'DELETE',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ passcode: passcode })
-    }).then(function(r){
-      return r.json().then(function(data){ return { ok: r.ok, data: data }; });
+    if (!window.confirm('Remove ' + delBtn.dataset.name + ' from the Cellar?')) return;
+    fetch('/api/bottles/' + encodeURIComponent(id), { method: 'DELETE' }).then(function(r){
+      return r.json().then(function(data){ return { ok: r.ok, status: r.status, data: data }; });
     }).then(function(res){
       if (res.ok) {
         bottles = bottles.filter(function(b){ return String(b.id) !== String(id); });
         render();
+      } else if (res.status === 401) {
+        setSession({ authed: false });
+        alert('Your sign-in expired — sign in again to remove bottles.');
       } else {
         alert((res.data && res.data.error) || 'Could not delete that bottle.');
       }
@@ -487,9 +493,42 @@
     render();
   });
 
+  function setSession(s){
+    // The footer comes after this script, so wait for the DOM before touching it.
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function(){ setSession(s); });
+      return;
+    }
+    session = s;
+    document.getElementById('cellarCta').hidden = !s.authed;
+    var bar = document.getElementById('adminBar');
+    bar.textContent = '';
+    if (s.authed) {
+      bar.appendChild(document.createTextNode('Signed in as ' + (s.name || s.email) + ' · '));
+      var out = document.createElement('button');
+      out.type = 'button';
+      out.textContent = 'Sign out';
+      out.addEventListener('click', function(){
+        fetch('/api/logout', { method: 'POST' }).then(function(){ setSession({ authed: false }); });
+      });
+      bar.appendChild(out);
+    } else {
+      var a = document.createElement('a');
+      a.href = '/login.html';
+      a.textContent = 'Admin sign in';
+      bar.appendChild(a);
+    }
+    render();
+  }
+
+  fetch('/api/session')
+    .then(function(r){ return r.json(); })
+    .then(setSession)
+    .catch(function(){ setSession({ authed: false }); });
+
   fetch('/api/bottles')
     .then(function(r){ return r.json(); })
-    .then(function(data){ bottles = Array.isArray(data) ? data : []; render(); })
+    .then(function(data){ bottles = Array.isArray(data) ? data : []; loaded = true; render(); })
     .catch(function(){
       content.innerHTML = '<div class="cellar-empty">Couldn&rsquo;t load the cellar right now &mdash; try refreshing.</div>';
     });
@@ -514,6 +553,7 @@
 <footer>
   <span class="brand-mini">Bar 540 &middot; Est. 2012</span>
   a home bar for the end of a long day
+  <div class="admin-bar" id="adminBar"></div>
 </footer>
 
 </body>

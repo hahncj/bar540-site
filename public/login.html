@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign In — Bar 540</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#1d2330; --bg-deep:#171b25; --panel:#252c3c; --cream:#f5efe4; --cream-dim:#aab0c2;
+    --coral:#ff7a52; --coral-deep:#e5623c; --teal:#3ecbb3; --gold:#f4b942; --line:rgba(245,239,228,0.12);
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    background:var(--bg); color:var(--cream); font-family:'Nunito',sans-serif;
+    min-height:100vh; padding:32px 20px 80px;
+  }
+  .wrap{max-width:480px; margin:0 auto;}
+  a.back{color:var(--cream-dim); font-size:13px; display:inline-block; margin-bottom:20px;}
+  h1{font-family:'Fredoka',sans-serif; font-weight:600; font-size:28px; margin-bottom:6px;}
+  .sub{color:var(--cream-dim); font-size:14px; margin-bottom:28px;}
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:32px 24px; text-align:center;}
+  #googleBtn{display:flex; justify-content:center; min-height:44px;}
+  #status{margin-top:16px; font-size:14px;}
+  #status.ok{color:var(--teal);}
+  #status.err{color:var(--coral);}
+  .btn-secondary{
+    background:transparent; color:var(--teal); border:1px solid var(--teal);
+    font-family:'Fredoka',sans-serif; font-weight:600; font-size:14px;
+    padding:11px 24px; border-radius:30px; margin-top:16px; cursor:pointer;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">&larr; Back to Bar 540</a>
+  <h1>Admin Sign In</h1>
+  <div class="sub">Sign in with an approved Google account to manage the Cellar.</div>
+
+  <div class="panel">
+    <div id="googleBtn"></div>
+    <div id="signedIn" hidden>
+      <div id="whoami"></div>
+      <button type="button" class="btn-secondary" id="logoutBtn">Sign out</button>
+    </div>
+    <div id="status"></div>
+  </div>
+</div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script>
+  var status = document.getElementById('status');
+  var googleBtn = document.getElementById('googleBtn');
+
+  // Only allow same-site relative paths, so ?next= can't bounce people to another site.
+  function nextUrl(){
+    var n = new URLSearchParams(location.search).get('next') || '/#cellar';
+    return (n.charAt(0) === '/' && n.charAt(1) !== '/' && n.charAt(1) !== '\\') ? n : '/#cellar';
+  }
+
+  function showStatus(msg, cls){
+    status.className = cls || '';
+    status.textContent = msg;
+  }
+
+  function onCredential(response){
+    showStatus('Signing in...');
+    fetch('/api/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ credential: response.credential })
+    }).then(function(r){
+      return r.json().then(function(data){ return { ok: r.ok, data: data }; });
+    }).then(function(res){
+      if (res.ok) {
+        showStatus('Signed in as ' + res.data.email, 'ok');
+        location.href = nextUrl();
+      } else {
+        showStatus(res.data.error || 'Sign-in failed.', 'err');
+      }
+    }).catch(function(){
+      showStatus('Sign-in failed — try again.', 'err');
+    });
+  }
+
+  function whenGoogleReady(cb){
+    if (window.google && google.accounts && google.accounts.id) return cb();
+    setTimeout(function(){ whenGoogleReady(cb); }, 100);
+  }
+
+  fetch('/api/session').then(function(r){ return r.json(); }).then(function(s){
+    if (s.authed) {
+      googleBtn.hidden = true;
+      document.getElementById('signedIn').hidden = false;
+      document.getElementById('whoami').textContent = 'Signed in as ' + s.email;
+      return;
+    }
+    if (!s.googleClientId) {
+      showStatus('Sign-in is not configured yet.', 'err');
+      return;
+    }
+    whenGoogleReady(function(){
+      google.accounts.id.initialize({ client_id: s.googleClientId, callback: onCredential });
+      google.accounts.id.renderButton(googleBtn, { theme: 'filled_black', shape: 'pill', size: 'large', text: 'signin_with' });
+    });
+  }).catch(function(){
+    showStatus('Could not reach the server — try refreshing.', 'err');
+  });
+
+  document.getElementById('logoutBtn').addEventListener('click', function(){
+    fetch('/api/logout', { method: 'POST' }).then(function(){
+      if (window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect();
+      location.href = '/';
+    });
+  });
+</script>
+</body>
+</html>

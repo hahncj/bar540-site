@@ -1,6 +1,62 @@
+import {
+  allowedEmails,
+  clearSessionCookie,
+  createSessionCookie,
+  readSecret,
+  readSession,
+  verifyGoogleIdToken,
+} from "./auth.js";
+
+function jsonError(message, status) {
+  return new Response(JSON.stringify({ error: message }), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    const secure = url.protocol === "https:";
+    const allowed = allowedEmails(env.ALLOWED_EMAILS);
+    const sessionSecret = await readSecret(env.SESSION_SECRET);
+    const session = await readSession(request, sessionSecret, allowed);
+
+    // --- Who am I? Also hands the page the (public) Google client ID ---
+    if (url.pathname === "/api/session" && request.method === "GET") {
+      return Response.json({
+        authed: !!session,
+        email: session?.email || null,
+        name: session?.name || null,
+        googleClientId: env.GOOGLE_CLIENT_ID || null,
+      });
+    }
+
+    // --- Sign in: exchange a Google ID token for a session cookie ---
+    if (url.pathname === "/api/login" && request.method === "POST") {
+      if (!env.GOOGLE_CLIENT_ID || !sessionSecret) return jsonError("Sign-in is not configured", 500);
+      let body = {};
+      try {
+        body = await request.json();
+      } catch (e) {}
+
+      let claims;
+      try {
+        claims = await verifyGoogleIdToken(body.credential, env.GOOGLE_CLIENT_ID);
+      } catch (e) {
+        return jsonError("Google sign-in could not be verified", 401);
+      }
+      const email = String(claims.email).toLowerCase();
+      if (!allowed.includes(email)) return jsonError(`${email} isn't on the admin list`, 403);
+
+      const cookie = await createSessionCookie({ email, name: claims.given_name || claims.name }, sessionSecret, secure);
+      return Response.json({ ok: true, email }, { headers: { "set-cookie": cookie } });
+    }
+
+    // --- Sign out ---
+    if (url.pathname === "/api/logout" && request.method === "POST") {
+      return Response.json({ ok: true }, { headers: { "set-cookie": clearSessionCookie(secure) } });
+    }
 
     // --- List bottles ---
     if (url.pathname === "/api/bottles" && request.method === "GET") {
@@ -12,21 +68,13 @@ export default {
 
     // --- Add a bottle ---
     if (url.pathname === "/api/bottles" && request.method === "POST") {
+      if (!session) return jsonError("Sign in to add bottles", 401);
       let form;
       try {
         form = await request.formData();
       } catch (e) {
         return new Response(JSON.stringify({ error: "Invalid form submission" }), {
           status: 400,
-          headers: { "content-type": "application/json" },
-        });
-      }
-
-      const passcode = form.get("passcode");
-      const expectedPasscode = env.BOTTLE_PASSCODE ? await env.BOTTLE_PASSCODE.get() : null;
-      if (!expectedPasscode || passcode !== expectedPasscode) {
-        return new Response(JSON.stringify({ error: "Wrong passcode" }), {
-          status: 401,
           headers: { "content-type": "application/json" },
         });
       }
@@ -66,19 +114,8 @@ export default {
 
     // --- Delete a bottle ---
     if (url.pathname.startsWith("/api/bottles/") && request.method === "DELETE") {
+      if (!session) return jsonError("Sign in to remove bottles", 401);
       const id = url.pathname.replace("/api/bottles/", "");
-      let body = {};
-      try {
-        body = await request.json();
-      } catch (e) {}
-
-      const expectedPasscode = env.BOTTLE_PASSCODE ? await env.BOTTLE_PASSCODE.get() : null;
-      if (!expectedPasscode || body.passcode !== expectedPasscode) {
-        return new Response(JSON.stringify({ error: "Wrong passcode" }), {
-          status: 401,
-          headers: { "content-type": "application/json" },
-        });
-      }
 
       const row = await env.DB.prepare("SELECT photo_url FROM bottles WHERE id = ?").bind(id).first();
       if (row && row.photo_url) {
