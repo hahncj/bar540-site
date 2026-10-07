@@ -6,3 +6,8 @@ SESSION_SECRET=change-me
 # Token the kegerator sensors send as `Authorization: Bearer <token>` to POST /api/sensors.
 # Optional: without it, only a signed-in admin can record readings. Generate with: openssl rand -hex 24
 SENSOR_TOKEN=change-me
+# Anthropic API key for the AI bottle lookup (POST /api/identify), from console.anthropic.com.
+# Production: npx wrangler secret put ANTHROPIC_API_KEY. Without it the lookup returns a "not set up" error.
+ANTHROPIC_API_KEY=
+# Optional: Claude model for the lookup (defaults to claude-opus-5-5, see ai.js).
+# CLAUDE_MODEL=claude-opus-5-5

@@ -56,7 +56,24 @@
   .photo-preview img{max-width:100%; max-height:240px; border-radius:8px; display:block; margin:0 auto;}
   .photo-preview .caption{font-size:12px; color:var(--cream-dim); margin-top:8px;}
   .photo-actions{display:flex; gap:10px;}
+  .photo-choices{display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; margin:10px 0;}
+  .photo-choices:empty{display:none;}
+  .photo-choice{
+    position:relative; aspect-ratio:1; padding:0; overflow:hidden; cursor:pointer;
+    border-radius:8px; border:2px solid var(--line); background:#fff;
+  }
+  .photo-choice img{width:100%; height:100%; object-fit:contain; display:block;}
+  .photo-choice.own img{object-fit:cover;}
+  .photo-choice.selected{border-color:var(--teal); box-shadow:0 0 0 2px var(--teal);}
+  .photo-choice span{
+    position:absolute; left:0; right:0; bottom:0; padding:2px 0;
+    font-size:10px; font-weight:700; text-align:center; color:var(--cream); background:rgba(23,27,37,0.8);
+  }
   .photo-actions .btn-secondary{flex:1;}
+  .btn-ai{background:var(--teal); color:var(--bg-deep); border-color:var(--teal);}
+  .btn-ai:disabled, .btn-secondary:disabled{opacity:0.6; cursor:default;}
+  .ai-status{font-size:13px; color:var(--cream-dim); margin-top:6px;}
+  .ai-status:empty{display:none;}
   .linkish{background:none; border:none; color:var(--teal); font:inherit; font-size:13px; text-decoration:underline; cursor:pointer; margin-top:8px; display:none;}
   .success-panel{
     text-align:center; background:var(--panel); border:2px solid var(--teal);
@@ -75,8 +92,9 @@
 <div class="wrap">
   <a class="back" href="/#cellar">&larr; Back to the Cellar</a>
   <h1>Add a Bottle</h1>
-  <div class="sub">Scan a barcode to try auto-filling details, or just type it in.</div>
+  <div class="sub">Snap the label and let AI fill in the details, scan a barcode, or just type it in.</div>
 
+  <button type="button" class="btn-secondary btn-ai" id="identifyBtn">&#128247; Snap the Label &mdash; AI Fills It In</button>
   <button type="button" class="btn-secondary" id="scanBtn">Scan Barcode</button>
   <div id="scanner"></div>
   <div id="lookupStatus"></div>
@@ -92,6 +110,8 @@
 
     <label>Name</label>
     <input type="text" name="name" required placeholder="e.g. Woodford Reserve">
+    <button type="button" class="linkish" id="fillFromNameBtn">&#10024; Fill in the rest from this name</button>
+    <div class="ai-status" id="nameStatus"></div>
 
     <label>Maker / Distillery / Winery</label>
     <input type="text" name="maker" placeholder="e.g. Woodford Reserve Distillery">
@@ -126,13 +146,14 @@
       <img id="photoPreviewImg" alt="Bottle photo preview">
       <div class="caption" id="photoCaption"></div>
     </div>
+    <div class="photo-choices" id="photoChoices"></div>
     <div class="photo-actions">
       <button type="button" class="btn-secondary" id="takePhotoBtn">Take Photo</button>
       <button type="button" class="btn-secondary" id="choosePhotoBtn">Choose Photo</button>
     </div>
-    <button type="button" class="linkish" id="useStockBtn">Use stock photo instead</button>
+    <button type="button" class="linkish" id="findStockBtn">&#128269; Find stock photos for this bottle</button>
+    <div class="ai-status" id="stockStatus"></div>
     <input type="file" name="photo" id="photoInput" accept="image/*" hidden>
-    <input type="hidden" name="stock_image_url" id="stockImageUrl">
 
     <button type="submit" class="btn">Add to the Cellar</button>
   </form>
@@ -167,52 +188,103 @@
     if (vintageField.hidden) form.vintage.value = '';
   });
 
-  // --- Photo: stock image from the barcode lookup is the default; camera/library overrides it ---
+  // --- Photo: your own (camera/library) or a stock photo (barcode lookup or name search) — you pick ---
   var photoInput = document.getElementById('photoInput');
-  var stockImageUrl = document.getElementById('stockImageUrl');
   var photoPreview = document.getElementById('photoPreview');
   var photoPreviewImg = document.getElementById('photoPreviewImg');
   var photoCaption = document.getElementById('photoCaption');
-  var useStockBtn = document.getElementById('useStockBtn');
-  var stockUrl = null;   // the stock image that loaded successfully, if any
-  var previewObjectUrl = null;
+  var photoChoices = document.getElementById('photoChoices');
+  var findStockBtn = document.getElementById('findStockBtn');
+  var stockStatus = document.getElementById('stockStatus');
+  var ownPhotoUrl = null;  // object URL for the photo you took or chose
+  var stockUrls = [];      // stock images that actually load
+  var photoChoice = null;  // 'own', a stock image URL, or null
 
-  function showPreview(src, caption){
-    photoPreviewImg.src = src;
-    photoCaption.textContent = caption;
-    photoPreview.style.display = 'block';
+  function renderPhoto(){
+    if (photoChoice) {
+      var own = photoChoice === 'own';
+      photoPreviewImg.src = own ? ownPhotoUrl : photoChoice;
+      photoCaption.textContent = own ? 'Your photo' : 'Stock photo — a copy is saved with the bottle';
+      photoPreview.style.display = 'block';
+    } else {
+      photoPreview.style.display = 'none';
+    }
+    // Thumbnails only when there's a choice to make.
+    photoChoices.textContent = '';
+    if (!stockUrls.length) return;
+    if (ownPhotoUrl) photoChoices.appendChild(choiceTile('own', ownPhotoUrl, 'Yours'));
+    stockUrls.forEach(function(url){ photoChoices.appendChild(choiceTile(url, url, 'Stock')); });
   }
 
-  function useStockPhoto(){
-    photoInput.value = '';
-    stockImageUrl.value = stockUrl;
-    showPreview(stockUrl, 'Stock photo from barcode lookup');
-    useStockBtn.style.display = 'none';
+  function choiceTile(value, src, label){
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'photo-choice' + (value === 'own' ? ' own' : '') + (photoChoice === value ? ' selected' : '');
+    btn.dataset.choice = value;
+    var img = document.createElement('img');
+    img.alt = label + ' photo';
+    img.src = src;
+    var tag = document.createElement('span');
+    tag.textContent = label;
+    btn.appendChild(img);
+    btn.appendChild(tag);
+    return btn;
   }
 
-  // Forget any stock photo from a previous scan (a user-picked photo stays put).
-  function clearStockImage(){
-    stockUrl = null;
-    stockImageUrl.value = '';
-    useStockBtn.style.display = 'none';
-    if (!photoInput.files.length) photoPreview.style.display = 'none';
-  }
+  photoChoices.addEventListener('click', function(e){
+    var tile = e.target.closest('.photo-choice');
+    if (!tile) return;
+    photoChoice = tile.dataset.choice;
+    renderPhoto();
+  });
 
-  // Try each candidate image in turn and keep the first one that actually loads.
-  function loadStockImage(urls){
-    var i = 0;
-    (function tryNext(){
-      if (i >= urls.length) return;
-      var url = urls[i++];
+  // Keep only candidates that actually load (retailer image links go stale).
+  function addStockImages(urls){
+    urls.forEach(function(url){
+      if (stockUrls.indexOf(url) !== -1) return;
       var probe = new Image();
       probe.onload = function(){
-        stockUrl = url;
-        if (photoInput.files.length) useStockBtn.style.display = 'inline-block';
-        else useStockPhoto();
+        if (stockUrls.indexOf(url) !== -1 || stockUrls.length >= 8) return;
+        stockUrls.push(url);
+        if (!photoChoice) photoChoice = url;
+        renderPhoto();
       };
-      probe.onerror = tryNext;
       probe.src = url;
-    })();
+    });
+  }
+
+  // Forget stock photos from an earlier lookup (your own photo stays).
+  function clearStockImages(){
+    stockUrls = [];
+    if (photoChoice !== 'own') photoChoice = ownPhotoUrl ? 'own' : null;
+    renderPhoto();
+  }
+
+  function findStockPhotos(name){
+    stockStatus.textContent = 'Looking for stock photos…';
+    findStockBtn.disabled = true;
+    fetch('/api/stock-photos?q=' + encodeURIComponent(name)).then(function(r){
+      return r.json().then(function(data){ return { status: r.status, data: data }; });
+    }).then(function(res){
+      if (res.status === 401) { location.href = '/login.html?next=' + encodeURIComponent('/add.html'); return; }
+      var images = (res.data && res.data.images) || [];
+      if (res.data && res.data.error) stockStatus.textContent = res.data.error;
+      else if (!images.length) stockStatus.textContent = 'No stock photos found for ' + name + '.';
+      else { stockStatus.textContent = 'Tap a photo above to use it.'; addStockImages(images); }
+    }).catch(function(){
+      stockStatus.textContent = 'Stock photo search failed — try again.';
+    }).then(function(){ findStockBtn.disabled = false; });
+  }
+
+  findStockBtn.addEventListener('click', function(){
+    if (form.name.value.trim()) findStockPhotos(form.name.value.trim());
+  });
+
+  // The name-based links only make sense once there's a name to work with.
+  function updateNameLinks(){
+    var show = form.name.value.trim().length >= 3 ? 'inline-block' : 'none';
+    findStockBtn.style.display = show;
+    document.getElementById('fillFromNameBtn').style.display = show;
   }
 
   document.getElementById('takePhotoBtn').addEventListener('click', function(){
@@ -223,17 +295,114 @@
     photoInput.removeAttribute('capture');
     photoInput.click();
   });
-  useStockBtn.addEventListener('click', useStockPhoto);
 
   photoInput.addEventListener('change', function(){
     var file = photoInput.files[0];
     if (!file) return;
-    if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
-    previewObjectUrl = URL.createObjectURL(file);
-    stockImageUrl.value = '';
-    showPreview(previewObjectUrl, 'Your photo');
-    useStockBtn.style.display = stockUrl ? 'inline-block' : 'none';
+    if (ownPhotoUrl) URL.revokeObjectURL(ownPhotoUrl);
+    ownPhotoUrl = URL.createObjectURL(file);
+    photoChoice = 'own';
+    renderPhoto();
+    if (identifyNextPhoto || !form.name.value.trim()) identifyFromPhoto(file);
+    identifyNextPhoto = false;
   });
+
+  // --- AI lookup: label photo and/or typed name -> form fields (POST /api/identify) ---
+  var identifyBtn = document.getElementById('identifyBtn');
+  var fillFromNameBtn = document.getElementById('fillFromNameBtn');
+  var nameStatus = document.getElementById('nameStatus');
+  var identifyNextPhoto = false;
+  var identifying = false;
+
+  identifyBtn.addEventListener('click', function(){
+    identifyNextPhoto = true;
+    photoInput.setAttribute('capture', 'environment');
+    photoInput.click();
+  });
+
+  // Offer the name lookup once there's something worth looking up.
+  form.name.addEventListener('input', updateNameLinks);
+  fillFromNameBtn.addEventListener('click', function(){
+    runIdentify(null, nameStatus);
+  });
+
+  // Shrink to ~1280px on the long edge as a JPEG: plenty to read a label, and keeps the AI call small and cheap.
+  function resizeForAi(file){
+    return new Promise(function(resolve, reject){
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function(){
+        var scale = Math.min(1, 1280 / Math.max(img.naturalWidth, img.naturalHeight));
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.naturalWidth * scale);
+        canvas.height = Math.round(img.naturalHeight * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        canvas.toBlob(function(blob){ blob ? resolve(blob) : reject(new Error('resize failed')); }, 'image/jpeg', 0.85);
+      };
+      img.onerror = function(){ URL.revokeObjectURL(url); reject(new Error('unreadable')); };
+      img.src = url;
+    });
+  }
+
+  function identifyFromPhoto(file){
+    lookupStatus.textContent = 'Reading the label…';
+    resizeForAi(file).then(function(blob){
+      runIdentify(blob, lookupStatus);
+    }, function(){
+      lookupStatus.textContent = "Couldn't read that photo — try another, or fill in the details by hand.";
+    });
+  }
+
+  // Fills only fields that are still empty, so nothing you typed gets overwritten.
+  function fillFromAi(d){
+    var filled = [];
+    function set(field, value, label){
+      if (value === null || value === undefined || value === '' || String(field.value).trim()) return;
+      field.value = value;
+      filled.push(label);
+    }
+    if (d.category && !form.category.value) {
+      form.category.value = d.category;
+      form.category.dispatchEvent(new Event('change'));
+      filled.push('category');
+    }
+    set(form.name, d.name, 'name');
+    set(form.maker, d.maker, 'maker');
+    set(form.abv, d.abv, 'ABV');
+    if (form.category.value === 'wine') set(form.vintage, d.vintage, 'vintage');
+    set(form.notes, d.notes, 'tasting notes');
+    return filled;
+  }
+
+  function runIdentify(photoBlob, statusEl){
+    if (identifying) return;
+    var body = new FormData();
+    if (photoBlob) body.append('photo', photoBlob, 'label.jpg');
+    if (form.name.value.trim()) body.append('name', form.name.value.trim());
+    identifying = true;
+    identifyBtn.disabled = fillFromNameBtn.disabled = true;
+    statusEl.textContent = photoBlob ? 'Reading the label…' : 'Looking it up…';
+    fetch('/api/identify', { method: 'POST', body: body }).then(function(r){
+      return r.json().then(function(data){ return { ok: r.ok, status: r.status, data: data }; });
+    }).then(function(res){
+      if (res.status === 401) { location.href = '/login.html?next=' + encodeURIComponent('/add.html'); return; }
+      if (!res.ok) { statusEl.textContent = (res.data && res.data.error) || 'AI lookup failed — fill in the details by hand.'; return; }
+      var d = res.data;
+      if (!d.name) { statusEl.textContent = "Couldn't tell what that is — fill in the details by hand."; return; }
+      var filled = fillFromAi(d);
+      updateNameLinks();
+      findStockPhotos(d.name);
+      statusEl.textContent = filled.length
+        ? 'Filled in ' + filled.join(', ') + (d.confident ? '' : ' (a best guess — the label was hard to make out)') + '. Double-check before saving.'
+        : 'Looks like ' + d.name + ' — your fields were already filled in, so nothing changed.';
+    }).catch(function(){
+      statusEl.textContent = 'AI lookup failed — check your connection and try again.';
+    }).then(function(){
+      identifying = false;
+      identifyBtn.disabled = fillFromNameBtn.disabled = false;
+    });
+  }
 
   scanBtn.addEventListener('click', async function(){
     if (scannerDiv.style.display === 'block') {
@@ -271,7 +440,7 @@
   async function onScanSuccess(decodedText){
     await stopScanner();
     lookupStatus.textContent = 'Looking up ' + decodedText + '...';
-    clearStockImage();
+    clearStockImages();
     try {
       var res = await fetch('/api/lookup?upc=' + encodeURIComponent(decodedText));
       var data = await res.json();
@@ -279,8 +448,11 @@
         if (data.title) form.name.value = data.title;
         if (data.brand) form.maker.value = data.brand;
         if (data.description) form.notes.value = data.description;
-        if (data.images && data.images.length) loadStockImage(data.images);
+        if (data.images && data.images.length) addStockImages(data.images);
+        updateNameLinks();
         lookupStatus.textContent = 'Found a match — double check the details below.';
+      } else if (data.error) {
+        lookupStatus.textContent = data.error;
       } else {
         lookupStatus.textContent = "No match found for that barcode — fill in the details manually.";
       }
@@ -296,11 +468,17 @@
     var submitBtn = form.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
     try {
-      var res = await fetch('/api/bottles', { method: 'POST', body: new FormData(form) });
+      var body = new FormData(form);
+      if (photoChoice && photoChoice !== 'own') {
+        body.delete('photo');
+        body.set('stock_image_url', photoChoice);
+      }
+      var res = await fetch('/api/bottles', { method: 'POST', body: body });
       var data = await res.json();
       if (res.ok) {
         form.style.display = 'none';
         scanBtn.style.display = 'none';
+        identifyBtn.style.display = 'none';
         lookupStatus.textContent = '';
         document.getElementById('successPanel').style.display = 'block';
         setTimeout(function(){ window.location.href = '/#cellar'; }, 1400);

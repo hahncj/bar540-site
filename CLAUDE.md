@@ -25,7 +25,8 @@ There are no tests and no lint config.
 
 A single Cloudflare Worker (`worker.js`) fronts everything. Its `fetch` handler is a flat `if`-ladder router; anything that doesn't match an API/photo route falls through to `env.ASSETS.fetch(request)`, which serves the static files in `public/`.
 
-- `worker.js` — the backend. Routes: `GET/POST /api/bottles`, `DELETE /api/bottles/:id`, `GET /api/taps`, `PUT /api/taps/:id`, `GET/POST /api/sensors`, `GET /photos/:key`, `GET /api/lookup?upc=`, `GET /api/session`, `POST /api/login`, `POST /api/logout`.
+- `worker.js` — the backend. Routes: `GET/POST /api/bottles`, `DELETE /api/bottles/:id`, `GET /api/taps`, `PUT /api/taps/:id`, `GET/POST /api/sensors`, `POST /api/identify`, `GET /photos/:key`, `GET /api/lookup?upc=`, `GET /api/session`, `POST /api/login`, `POST /api/logout`.
+- `ai.js` — Claude label/name lookup for the Add-a-Bottle form (`identifyBottle`), plain `fetch` to the Messages API with a JSON-schema response. Behind `POST /api/identify` (signed-in only, since each call costs money). Needs the `ANTHROPIC_API_KEY` Worker secret; `CLAUDE_MODEL` optionally overrides the model.
 - `auth.js` — portable (Web Crypto only) Google ID-token verification and HMAC-signed session cookies.
 - `public/index.html` — main site. The Cellar section fetches `/api/bottles` and `/api/session`; the Add button and per-card delete buttons render only when signed in. Footer has the sign-in/out link.
 - `public/login.html` — "Sign in with Google" (Google Identity Services); POSTs the ID token to `/api/login`.

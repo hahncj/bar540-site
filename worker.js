@@ -7,12 +7,55 @@ import {
   readSession,
   verifyGoogleIdToken,
 } from "./auth.js";
+import { identifyBottle, IdentifyError } from "./ai.js";
 
 function jsonError(message, status) {
   return new Response(JSON.stringify({ error: message }), {
     status,
     headers: { "content-type": "application/json" },
   });
+}
+
+// Label photos sent to the AI are resized in the browser first; this is a backstop (the API's own per-image limit is 5 MB).
+const MAX_IDENTIFY_IMAGE_BYTES = 4 * 1024 * 1024;
+
+function bytesToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
+// UPCitemdb's free trial (barcode lookup and product search): ~100 requests a day per IP plus a short burst limit.
+// This Worker shares its outbound IP with other sites, so the quota can run out before we've used it.
+const UPC_LIMIT_MESSAGE = "The product lookup service's limit is used up — try again later.";
+
+async function upcitemdb(path, params) {
+  const u = new URL(`https://api.upcitemdb.com/prod/trial/${path}`);
+  for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
+  const resp = await fetch(u.toString());
+  const data = await resp.json().catch(() => ({}));
+  if (resp.status === 429 || data.code === "TOO_FAST" || data.code === "EXCEED_LIMIT") throw new Error(UPC_LIMIT_MESSAGE);
+  if (!resp.ok) throw new Error("Lookup service unavailable");
+  return data;
+}
+
+// Search results include look-alikes (merch, unrelated products), so keep images only from listings
+// whose title has every distinctive word of the name and doesn't look like merchandise.
+const NAME_FILLER = new Set(["the", "and", "of", "year", "years", "old", "yr", "yo"]);
+const MERCH = /\b(sign|shirt|tee|hat|cap|hoodie|glass(es|ware)?|mug|poster|opener|koozie|coaster|decal|sticker|tin|bag|socks?|keychain)\b/i;
+function stockImagesFor(name, items, max = 8) {
+  const words = name.toLowerCase().split(/[^a-z0-9'éè]+/).filter((w) => w.length > 1 && !NAME_FILLER.has(w) && !/^\d+$/.test(w));
+  const images = [];
+  for (const item of items) {
+    const title = (item.title || "").toLowerCase();
+    if (!words.length || !words.every((w) => title.includes(w)) || MERCH.test(title)) continue;
+    for (const img of item.images || []) {
+      if (/^https?:\/\//i.test(img) && !images.includes(img)) images.push(img);
+      if (images.length >= max) return images;
+    }
+  }
+  return images;
 }
 
 // Readings the kegerator can report, with the range a sane value falls in.
@@ -301,8 +344,7 @@ export default {
         });
       }
       try {
-        const resp = await fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${encodeURIComponent(upc)}`);
-        const data = await resp.json();
+        const data = await upcitemdb("lookup", { upc });
         const item = data.items && data.items[0];
         return Response.json({
           found: !!item,
@@ -312,7 +354,53 @@ export default {
           images: (item?.images || []).filter((u) => /^https?:\/\//i.test(u)),
         });
       } catch (e) {
-        return Response.json({ found: false, error: "Lookup service unavailable" });
+        return Response.json({ found: false, error: e.message });
+      }
+    }
+
+    // --- Stock photo candidates for a product name (UPCitemdb product search) ---
+    if (url.pathname === "/api/stock-photos" && request.method === "GET") {
+      if (!session) return jsonError("Sign in to search stock photos", 401);
+      const q = (url.searchParams.get("q") || "").trim().slice(0, 120);
+      if (!q) return jsonError("Missing q", 400);
+      try {
+        const data = await upcitemdb("search", { s: q, match_mode: "0", type: "product" });
+        return Response.json({ images: stockImagesFor(q, data.items || []) });
+      } catch (e) {
+        return Response.json({ images: [], error: e.message });
+      }
+    }
+
+    // --- AI lookup: fill in bottle details from a label photo and/or a name ---
+    // Signed-in only: every call costs money on the Anthropic account.
+    if (url.pathname === "/api/identify" && request.method === "POST") {
+      if (!session) return jsonError("Sign in to use the AI lookup", 401);
+      let form;
+      try {
+        form = await request.formData();
+      } catch (e) {
+        return jsonError("Invalid form submission", 400);
+      }
+      const name = (form.get("name") || "").toString().trim().slice(0, 200) || null;
+      let image = null;
+      const photo = form.get("photo");
+      if (photo && typeof photo === "object" && photo.size > 0) {
+        const mediaType = (photo.type || "").toLowerCase();
+        if (!IMAGE_EXTS[mediaType]) return jsonError("Photo must be a JPEG, PNG, WebP, or GIF", 400);
+        if (photo.size > MAX_IDENTIFY_IMAGE_BYTES) return jsonError("Photo is too large — try a smaller one", 400);
+        image = { data: bytesToBase64(await photo.arrayBuffer()), mediaType };
+      }
+      try {
+        const result = await identifyBottle({
+          apiKey: await readSecret(env.ANTHROPIC_API_KEY),
+          model: env.CLAUDE_MODEL,
+          image,
+          name,
+        });
+        return Response.json(result);
+      } catch (e) {
+        if (e instanceof IdentifyError) return jsonError(e.message, e.status);
+        return jsonError("AI lookup failed — try again", 502);
       }
     }
 
