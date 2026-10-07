@@ -1041,12 +1041,12 @@ function formatDate(iso){
         (session.authed
           ? '<div class="bottle-admin">' +
               '<div class="bottle-stepper">' +
-                '<button type="button" class="qty-btn" data-id="' + b.id + '" data-delta="-1" title="' + (b.quantity > 1 ? 'One fewer' : 'Use Remove to take out the last one') + '"' + (b.quantity > 1 ? '' : ' disabled') + '>&minus;</button>' +
+                '<button type="button" class="qty-btn" data-id="' + b.id + '" data-delta="-1" title="' + (b.quantity > 1 ? 'One fewer' : 'Finished the last one') + '">&minus;</button>' +
                 '<span class="qty-label">' + b.quantity + ' on hand</span>' +
                 '<button type="button" class="qty-btn" data-id="' + b.id + '" data-delta="1" title="One more">+</button>' +
               '</div>' +
               (b.purchased_on ? '<div class="bottle-purchased">Purchased ' + escapeHtml(formatDate(b.purchased_on)) + '</div>' : '') +
-              '<button class="bottle-delete" data-id="' + b.id + '" data-name="' + escapeHtml(b.name) + '" type="button">Remove from the Cellar</button>' +
+              '<button class="bottle-delete" data-id="' + b.id + '" data-name="' + escapeHtml(b.name) + '" type="button">Delete entirely</button>' +
             '</div>'
           : '') +
       '</div>';
@@ -1072,7 +1072,8 @@ function formatDate(iso){
     var bottle = findBottle(qtyBtn.dataset.id);
     if (!bottle) return;
     var next = bottle.quantity + Number(qtyBtn.dataset.delta);
-    if (next < 1) return;
+    if (next < 0) return;
+    if (next === 0 && !window.confirm('Finished the last ' + bottle.name + '? It comes off the Cellar list but stays saved, so it\u2019s quick to add again.')) return;
     // Lock the stepper until the server answers, so fast taps can't race each other.
     var stepperBtns = qtyBtn.parentNode.querySelectorAll('button');
     stepperBtns.forEach(function(btn){ btn.disabled = true; });
@@ -1085,6 +1086,8 @@ function formatDate(iso){
     }).then(function(res){
       if (res.ok) {
         bottle.quantity = res.data.quantity;
+        // Finished bottles leave the list (the open detail dialog closes when its bottle is gone).
+        if (bottle.quantity === 0) bottles = bottles.filter(function(b){ return b !== bottle; });
       } else if (res.status === 401) {
         setSession({ authed: false });
         alert('Your sign-in expired — sign in again to update bottles.');
@@ -1100,7 +1103,7 @@ function formatDate(iso){
     var delBtn = e.target.closest('.bottle-delete');
     if (!delBtn) return;
     var id = delBtn.dataset.id;
-    if (!window.confirm('Remove ' + delBtn.dataset.name + ' from the Cellar?')) return;
+    if (!window.confirm('Delete ' + delBtn.dataset.name + ' entirely, photo and all? To keep it for quick re-adding, use \u2212 to mark it finished instead.')) return;
     fetch('/api/bottles/' + encodeURIComponent(id), { method: 'DELETE' }).then(function(r){
       return r.json().then(function(data){ return { ok: r.ok, status: r.status, data: data }; });
     }).then(function(res){

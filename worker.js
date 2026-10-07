@@ -135,11 +135,26 @@ export default {
       return Response.json({ ok: true }, { headers: { "set-cookie": clearSessionCookie(secure) } });
     }
 
-    // --- List bottles ---
+    // --- List bottles on hand (quantity 0 = known but not on hand; those only feed the type-ahead) ---
     if (url.pathname === "/api/bottles" && request.method === "GET") {
       const { results } = await env.DB.prepare(
-        "SELECT id, category, name, maker, notes, abv, photo_url, added_at, purchased_on, vintage, quantity FROM bottles ORDER BY category, name"
+        "SELECT id, category, name, maker, notes, abv, photo_url, added_at, purchased_on, vintage, quantity FROM bottles WHERE quantity > 0 ORDER BY category, name"
       ).all();
+      return Response.json(results);
+    }
+
+    // --- Type-ahead for the Add-a-Bottle form: every bottle we know, on hand first ---
+    if (url.pathname === "/api/bottles/search" && request.method === "GET") {
+      if (!session) return jsonError("Sign in to search bottles", 401);
+      // Every word must appear somewhere in the name or maker, in any order. LIKE wildcards in the input are escaped.
+      const words = (url.searchParams.get("q") || "").toLowerCase().split(/\s+/).filter(Boolean).slice(0, 5);
+      if (!words.length) return Response.json([]);
+      const where = words.map(() => "(name || ' ' || COALESCE(maker, '')) LIKE ? ESCAPE '\\'").join(" AND ");
+      const patterns = words.map((w) => "%" + w.replace(/[\\%_]/g, (c) => "\\" + c) + "%");
+      const { results } = await env.DB.prepare(
+        `SELECT id, category, name, maker, notes, abv, photo_url, vintage, quantity FROM bottles WHERE ${where} ` +
+        "ORDER BY quantity > 0 DESC, lower(name) LIKE ? DESC, name LIMIT 8"
+      ).bind(...patterns, words[0] + "%").all();
       return Response.json(results);
     }
 
@@ -180,6 +195,16 @@ export default {
       if (vintage !== null && !(Number.isInteger(vintage) && vintage >= 1800 && vintage <= 2100)) return jsonError("Vintage must be a year", 400);
       if (!(Number.isInteger(quantity) && quantity >= 1)) return jsonError("Quantity must be a whole number of 1 or more", 400);
 
+      // Picked from the type-ahead: add to that row instead of creating a duplicate.
+      let existing = null;
+      const existingId = form.get("existing_id");
+      if (existingId) {
+        existing = await env.DB.prepare("SELECT id, quantity, vintage, photo_url FROM bottles WHERE id = ?").bind(existingId).first();
+        if (!existing) return jsonError("That bottle isn't in the database any more — clear the form and try again", 404);
+        // A different vintage of a wine you already have on hand is a separate bottle.
+        if (category === "wine" && existing.quantity > 0 && vintage !== existing.vintage) existing = null;
+      }
+
       let photo_url = null;
       const photo = form.get("photo");
       if (photo && typeof photo === "object" && photo.size > 0) {
@@ -195,11 +220,23 @@ export default {
         } catch (e) {}
       }
 
-      await env.DB.prepare(
-        "INSERT INTO bottles (category, name, maker, notes, abv, photo_url, purchased_on, vintage, quantity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-      ).bind(category, name, maker, notes, abv, photo_url, purchasedOn, vintage, quantity).run();
+      if (existing) {
+        // A new photo replaces the old one (and the old file goes); otherwise keep what it had.
+        if (photo_url && existing.photo_url) {
+          try { await env.PHOTOS.delete(existing.photo_url.replace("/photos/", "")); } catch (e) {}
+        }
+        await env.DB.prepare(
+          "UPDATE bottles SET category = ?, name = ?, maker = ?, notes = ?, abv = ?, photo_url = ?, " +
+          "purchased_on = COALESCE(?, purchased_on), vintage = ?, quantity = quantity + ? WHERE id = ?"
+        ).bind(category, name, maker, notes, abv, photo_url || existing.photo_url, purchasedOn, vintage, quantity, existing.id).run();
+        return Response.json({ ok: true, id: existing.id, updated: true });
+      }
 
-      return Response.json({ ok: true });
+      const row = await env.DB.prepare(
+        "INSERT INTO bottles (category, name, maker, notes, abv, photo_url, purchased_on, vintage, quantity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id"
+      ).bind(category, name, maker, notes, abv, photo_url, purchasedOn, vintage, quantity).first();
+
+      return Response.json({ ok: true, id: row.id });
     }
 
     // --- Change how many of a bottle are on hand ---
@@ -210,8 +247,9 @@ export default {
       try {
         body = await request.json();
       } catch (e) {}
+      // 0 = finished: it leaves the Cellar list but stays in the database for the type-ahead.
       const quantity = Number(body.quantity);
-      if (!(Number.isInteger(quantity) && quantity >= 1)) return jsonError("Quantity must be a whole number of 1 or more", 400);
+      if (!(Number.isInteger(quantity) && quantity >= 0)) return jsonError("Quantity must be a whole number, 0 or more", 400);
 
       const row = await env.DB.prepare("UPDATE bottles SET quantity = ? WHERE id = ? RETURNING id, quantity")
         .bind(quantity, id).first();

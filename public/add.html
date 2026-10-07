@@ -74,6 +74,23 @@
   .btn-ai:disabled, .btn-secondary:disabled{opacity:0.6; cursor:default;}
   .ai-status{font-size:13px; color:var(--cream-dim); margin-top:6px;}
   .ai-status:empty{display:none;}
+  .typeahead{position:relative;}
+  .suggestions{
+    position:absolute; z-index:5; left:0; right:0; top:calc(100% + 4px);
+    background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden;
+    box-shadow:0 12px 28px rgba(0,0,0,0.45);
+  }
+  .suggestion{
+    display:block; width:100%; text-align:left; cursor:pointer;
+    background:none; border:none; border-top:1px solid var(--line);
+    color:var(--cream); font:inherit; padding:9px 14px;
+  }
+  .suggestion:first-child{border-top:none;}
+  .suggestion:hover, .suggestion.active{background:rgba(62,203,179,0.14);}
+  .suggestion-name{font-size:15px; font-weight:600;}
+  .suggestion-meta{font-size:12px; color:var(--cream-dim);}
+  .suggestion-badge{float:right; margin-left:8px; font-size:11px; font-weight:700; color:var(--teal); white-space:nowrap;}
+  .match-note{color:var(--teal);}
   .linkish{background:none; border:none; color:var(--teal); font:inherit; font-size:13px; text-decoration:underline; cursor:pointer; margin-top:8px; display:none;}
   .success-panel{
     text-align:center; background:var(--panel); border:2px solid var(--teal);
@@ -109,7 +126,13 @@
     </select>
 
     <label>Name</label>
-    <input type="text" name="name" required placeholder="e.g. Woodford Reserve">
+    <div class="typeahead">
+      <input type="text" name="name" required autocomplete="off" placeholder="Start typing &mdash; e.g. Woodford Reserve"
+        role="combobox" aria-autocomplete="list" aria-controls="suggestions" aria-expanded="false">
+      <div class="suggestions" id="suggestions" role="listbox" hidden></div>
+    </div>
+    <input type="hidden" name="existing_id" id="existingId">
+    <div class="ai-status match-note" id="matchNote"></div>
     <button type="button" class="linkish" id="fillFromNameBtn">&#10024; Fill in the rest from this name</button>
     <div class="ai-status" id="nameStatus"></div>
 
@@ -199,12 +222,17 @@
   var ownPhotoUrl = null;  // object URL for the photo you took or chose
   var stockUrls = [];      // stock images that actually load
   var photoChoice = null;  // 'own', a stock image URL, or null
+  var savedPhotoUrl = null; // photo of the bottle picked from the type-ahead; kept unless you choose another
 
   function renderPhoto(){
     if (photoChoice) {
       var own = photoChoice === 'own';
       photoPreviewImg.src = own ? ownPhotoUrl : photoChoice;
       photoCaption.textContent = own ? 'Your photo' : 'Stock photo — a copy is saved with the bottle';
+      photoPreview.style.display = 'block';
+    } else if (savedPhotoUrl) {
+      photoPreviewImg.src = savedPhotoUrl;
+      photoCaption.textContent = 'Saved photo — kept unless you choose another';
       photoPreview.style.display = 'block';
     } else {
       photoPreview.style.display = 'none';
@@ -306,6 +334,121 @@
     if (identifyNextPhoto || !form.name.value.trim()) identifyFromPhoto(file);
     identifyNextPhoto = false;
   });
+
+  // --- Type-ahead: every bottle in the database (on hand, finished, and the starter catalog) ---
+  var CATEGORY_LABELS = { whiskey: 'Whiskey', wine: 'Wine', beer: 'Specialty Beer' };
+  var suggestionsEl = document.getElementById('suggestions');
+  var existingIdInput = document.getElementById('existingId');
+  var matchNote = document.getElementById('matchNote');
+  var suggestionRows = [];
+  var activeSuggestion = -1;
+  var searchTimer = null;
+  var searchSeq = 0;
+
+  form.name.addEventListener('input', function(){
+    unlinkPickedBottle(); // typing again means it's no longer the bottle you picked
+    clearTimeout(searchTimer);
+    var q = form.name.value.trim();
+    if (q.length < 2) { hideSuggestions(); return; }
+    searchTimer = setTimeout(function(){ searchBottles(q); }, 200);
+  });
+
+  function searchBottles(q){
+    var seq = ++searchSeq;
+    fetch('/api/bottles/search?q=' + encodeURIComponent(q)).then(function(r){
+      return r.ok ? r.json() : [];
+    }).then(function(rows){
+      if (seq !== searchSeq) return; // a newer search has started
+      suggestionRows = rows;
+      activeSuggestion = -1;
+      renderSuggestions();
+    }).catch(function(){});
+  }
+
+  function renderSuggestions(){
+    suggestionsEl.textContent = '';
+    suggestionRows.forEach(function(b, i){
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'suggestion' + (i === activeSuggestion ? ' active' : '');
+      btn.setAttribute('role', 'option');
+      btn.dataset.index = i;
+      if (b.quantity > 0) {
+        var badge = document.createElement('span');
+        badge.className = 'suggestion-badge';
+        badge.textContent = b.quantity + ' on hand';
+        btn.appendChild(badge);
+      }
+      var name = document.createElement('div');
+      name.className = 'suggestion-name';
+      name.textContent = b.name + (b.vintage ? ' ' + b.vintage : '');
+      var meta = document.createElement('div');
+      meta.className = 'suggestion-meta';
+      meta.textContent = [CATEGORY_LABELS[b.category], b.maker, b.abv ? b.abv + '% ABV' : ''].filter(Boolean).join(' · ');
+      btn.appendChild(name);
+      btn.appendChild(meta);
+      suggestionsEl.appendChild(btn);
+    });
+    suggestionsEl.hidden = !suggestionRows.length;
+    form.name.setAttribute('aria-expanded', String(!suggestionsEl.hidden));
+  }
+
+  function hideSuggestions(){
+    suggestionRows = [];
+    renderSuggestions();
+  }
+
+  // mousedown (not click) so it lands before the input's blur hides the list.
+  suggestionsEl.addEventListener('mousedown', function(e){
+    var btn = e.target.closest('.suggestion');
+    if (!btn) return;
+    e.preventDefault();
+    pickBottle(suggestionRows[Number(btn.dataset.index)]);
+  });
+  form.name.addEventListener('blur', function(){ setTimeout(hideSuggestions, 150); });
+  form.name.addEventListener('keydown', function(e){
+    if (suggestionsEl.hidden) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      var last = suggestionRows.length - 1;
+      if (e.key === 'ArrowDown') activeSuggestion = activeSuggestion >= last ? 0 : activeSuggestion + 1;
+      else activeSuggestion = activeSuggestion <= 0 ? last : activeSuggestion - 1;
+      renderSuggestions();
+    } else if (e.key === 'Enter' && activeSuggestion >= 0) {
+      e.preventDefault();
+      pickBottle(suggestionRows[activeSuggestion]);
+    } else if (e.key === 'Escape') {
+      hideSuggestions();
+    }
+  });
+
+  // Fill the form from the picked bottle and save onto that row instead of adding a duplicate.
+  function pickBottle(b){
+    hideSuggestions();
+    form.category.value = b.category;
+    form.category.dispatchEvent(new Event('change'));
+    form.name.value = b.name;
+    form.maker.value = b.maker || '';
+    form.abv.value = b.abv === null || b.abv === undefined ? '' : b.abv;
+    if (b.category === 'wine') form.vintage.value = b.vintage || '';
+    form.notes.value = b.notes || '';
+    existingIdInput.value = b.id;
+    matchNote.textContent = b.quantity > 0
+      ? 'You already have ' + b.quantity + ' — saving adds to that count.'
+      : 'Already in the database — saving puts it back in the Cellar.';
+    savedPhotoUrl = b.photo_url || null;
+    renderPhoto();
+    updateNameLinks();
+    if (!savedPhotoUrl && !ownPhotoUrl && !stockUrls.length) findStockPhotos(b.name);
+  }
+
+  function unlinkPickedBottle(){
+    if (!existingIdInput.value) return;
+    existingIdInput.value = '';
+    matchNote.textContent = '';
+    savedPhotoUrl = null;
+    renderPhoto();
+  }
 
   // --- AI lookup: label photo and/or typed name -> form fields (POST /api/identify) ---
   var identifyBtn = document.getElementById('identifyBtn');
