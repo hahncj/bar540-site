@@ -203,7 +203,8 @@
   });
 
   var form = document.getElementById('bottleForm');
-  var status = document.getElementById('status');
+  // Not `status`: a global by that name is window.status, which turns anything assigned to it into a string.
+  var saveStatus = document.getElementById('status');
   var scanBtn = document.getElementById('scanBtn');
   var scannerDiv = document.getElementById('scanner');
   var lookupStatus = document.getElementById('lookupStatus');
@@ -633,8 +634,8 @@
 
   form.addEventListener('submit', async function(e){
     e.preventDefault();
-    status.className = '';
-    showStir(status, 'Adding it to the Cellar…');
+    saveStatus.className = '';
+    showStir(saveStatus, 'Adding it to the Cellar…');
     var submitBtn = form.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
     try {
@@ -657,12 +658,12 @@
         location.href = '/login.html?next=' + encodeURIComponent('/add.html');
         return;
       } else {
-        status.className = 'err';
-        status.textContent = data.error || 'Something went wrong.';
+        saveStatus.className = 'err';
+        saveStatus.textContent = data.error || 'Something went wrong.';
       }
     } catch (err) {
-      status.className = 'err';
-      status.textContent = 'Something went wrong — try again.';
+      saveStatus.className = 'err';
+      saveStatus.textContent = 'Something went wrong — try again.';
     } finally {
       submitBtn.disabled = false;
     }

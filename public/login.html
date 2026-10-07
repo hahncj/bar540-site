@@ -56,7 +56,8 @@
 
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
-  var status = document.getElementById('status');
+  // Not `status`: a global by that name is window.status, which turns anything assigned to it into a string.
+  var loginStatus = document.getElementById('status');
   var googleBtn = document.getElementById('googleBtn');
 
   // Only allow same-site relative paths, so ?next= can't bounce people to another site.
@@ -66,13 +67,13 @@
   }
 
   function showStatus(msg, cls){
-    status.className = cls || '';
-    status.textContent = msg;
+    loginStatus.className = cls || '';
+    loginStatus.textContent = msg;
   }
 
   function onCredential(response){
-    status.className = '';
-    showStir(status, 'Signing you in…');
+    loginStatus.className = '';
+    showStir(loginStatus, 'Signing you in…');
     fetch('/api/login', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
