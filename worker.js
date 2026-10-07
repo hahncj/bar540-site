@@ -58,6 +58,17 @@ function stockImagesFor(name, items, max = 8) {
   return images;
 }
 
+// Type-ahead matching: every word of q must appear somewhere in `column` (any order).
+// LIKE wildcards typed by the user are escaped. Returns { words, where, params } for a prepared statement.
+function matchAllWords(q, column) {
+  const words = (q || "").toLowerCase().split(/\s+/).filter(Boolean).slice(0, 5);
+  return {
+    words,
+    where: words.map(() => `${column} LIKE ? ESCAPE '\\'`).join(" AND "),
+    params: words.map((w) => "%" + w.replace(/[\\%_]/g, (c) => "\\" + c) + "%"),
+  };
+}
+
 // Readings the kegerator can report, with the range a sane value falls in.
 // A tapN_level_pct reading also sets that tap's keg level.
 const SENSORS = {
@@ -146,15 +157,27 @@ export default {
     // --- Type-ahead for the Add-a-Bottle form: every bottle we know, on hand first ---
     if (url.pathname === "/api/bottles/search" && request.method === "GET") {
       if (!session) return jsonError("Sign in to search bottles", 401);
-      // Every word must appear somewhere in the name or maker, in any order. LIKE wildcards in the input are escaped.
-      const words = (url.searchParams.get("q") || "").toLowerCase().split(/\s+/).filter(Boolean).slice(0, 5);
+      const { words, where, params } = matchAllWords(url.searchParams.get("q"), "(name || ' ' || COALESCE(maker, ''))");
       if (!words.length) return Response.json([]);
-      const where = words.map(() => "(name || ' ' || COALESCE(maker, '')) LIKE ? ESCAPE '\\'").join(" AND ");
-      const patterns = words.map((w) => "%" + w.replace(/[\\%_]/g, (c) => "\\" + c) + "%");
       const { results } = await env.DB.prepare(
         `SELECT id, category, name, maker, notes, abv, photo_url, vintage, quantity FROM bottles WHERE ${where} ` +
-        "ORDER BY quantity > 0 DESC, lower(name) LIKE ? DESC, name LIMIT 8"
-      ).bind(...patterns, words[0] + "%").all();
+        "ORDER BY quantity > 0 DESC, lower(name) LIKE ? ESCAPE '\\' DESC, name LIMIT 8"
+      ).bind(...params, params[0].slice(1)).all();
+      return Response.json(results);
+    }
+
+    // --- Type-ahead for the maker field: makers we know (optionally within a category), most bottles first ---
+    if (url.pathname === "/api/makers" && request.method === "GET") {
+      if (!session) return jsonError("Sign in to search makers", 401);
+      const { words, where, params } = matchAllWords(url.searchParams.get("q"), "maker");
+      if (!words.length) return Response.json([]);
+      const category = url.searchParams.get("category");
+      const byCategory = ["whiskey", "wine", "beer"].includes(category);
+      const { results } = await env.DB.prepare(
+        `SELECT maker, COUNT(*) AS bottles FROM bottles WHERE maker IS NOT NULL AND ${where}` +
+        (byCategory ? " AND category = ?" : "") +
+        " GROUP BY lower(maker) ORDER BY lower(maker) LIKE ? ESCAPE '\\' DESC, bottles DESC, maker LIMIT 8"
+      ).bind(...params, ...(byCategory ? [category] : []), params[0].slice(1)).all();
       return Response.json(results);
     }
 

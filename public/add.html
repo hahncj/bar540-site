@@ -137,7 +137,11 @@
     <div class="ai-status" id="nameStatus"></div>
 
     <label>Maker / Distillery / Winery</label>
-    <input type="text" name="maker" placeholder="e.g. Woodford Reserve Distillery">
+    <div class="typeahead">
+      <input type="text" name="maker" autocomplete="off" placeholder="Start typing &mdash; e.g. Buffalo Trace"
+        role="combobox" aria-autocomplete="list" aria-controls="makerSuggestions" aria-expanded="false">
+      <div class="suggestions" id="makerSuggestions" role="listbox" hidden></div>
+    </div>
 
     <div class="row">
       <div>
@@ -335,96 +339,118 @@
     identifyNextPhoto = false;
   });
 
-  // --- Type-ahead: every bottle in the database (on hand, finished, and the starter catalog) ---
+  // --- Type-ahead dropdowns (bottle name, maker) ---
+  // fetchRows(q) resolves to rows; describe(row) gives { title, meta, badge }; onPick(row) fills the form.
+  function attachTypeahead(input, listEl, fetchRows, describe, onPick){
+    var rows = [];
+    var active = -1;
+    var timer = null;
+    var seq = 0;
+
+    function render(){
+      listEl.textContent = '';
+      rows.forEach(function(row, i){
+        var d = describe(row);
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'suggestion' + (i === active ? ' active' : '');
+        btn.setAttribute('role', 'option');
+        btn.dataset.index = i;
+        if (d.badge) {
+          var badge = document.createElement('span');
+          badge.className = 'suggestion-badge';
+          badge.textContent = d.badge;
+          btn.appendChild(badge);
+        }
+        var title = document.createElement('div');
+        title.className = 'suggestion-name';
+        title.textContent = d.title;
+        btn.appendChild(title);
+        if (d.meta) {
+          var meta = document.createElement('div');
+          meta.className = 'suggestion-meta';
+          meta.textContent = d.meta;
+          btn.appendChild(meta);
+        }
+        listEl.appendChild(btn);
+      });
+      listEl.hidden = !rows.length;
+      input.setAttribute('aria-expanded', String(!listEl.hidden));
+    }
+
+    function hide(){ rows = []; render(); }
+    function pick(row){ hide(); onPick(row); }
+
+    input.addEventListener('input', function(){
+      clearTimeout(timer);
+      var q = input.value.trim();
+      if (q.length < 2) { hide(); return; }
+      timer = setTimeout(function(){
+        var mine = ++seq;
+        fetchRows(q).then(function(result){
+          if (mine !== seq) return; // a newer search has started
+          rows = result || [];
+          active = -1;
+          render();
+        }).catch(function(){});
+      }, 200);
+    });
+    // mousedown (not click) so it lands before the input's blur hides the list.
+    listEl.addEventListener('mousedown', function(e){
+      var btn = e.target.closest('.suggestion');
+      if (!btn) return;
+      e.preventDefault();
+      pick(rows[Number(btn.dataset.index)]);
+    });
+    input.addEventListener('blur', function(){ setTimeout(hide, 150); });
+    input.addEventListener('keydown', function(e){
+      if (listEl.hidden) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        var last = rows.length - 1;
+        if (e.key === 'ArrowDown') active = active >= last ? 0 : active + 1;
+        else active = active <= 0 ? last : active - 1;
+        render();
+      } else if (e.key === 'Enter' && active >= 0) {
+        e.preventDefault();
+        pick(rows[active]);
+      } else if (e.key === 'Escape') {
+        hide();
+      }
+    });
+  }
+
+  function getJson(url){
+    return fetch(url).then(function(r){ return r.ok ? r.json() : []; });
+  }
+
   var CATEGORY_LABELS = { whiskey: 'Whiskey', wine: 'Wine', beer: 'Specialty Beer' };
-  var suggestionsEl = document.getElementById('suggestions');
   var existingIdInput = document.getElementById('existingId');
   var matchNote = document.getElementById('matchNote');
-  var suggestionRows = [];
-  var activeSuggestion = -1;
-  var searchTimer = null;
-  var searchSeq = 0;
 
-  form.name.addEventListener('input', function(){
-    unlinkPickedBottle(); // typing again means it's no longer the bottle you picked
-    clearTimeout(searchTimer);
-    var q = form.name.value.trim();
-    if (q.length < 2) { hideSuggestions(); return; }
-    searchTimer = setTimeout(function(){ searchBottles(q); }, 200);
-  });
+  // Name: every bottle in the database (on hand, finished, and the starter catalog).
+  form.name.addEventListener('input', function(){ unlinkPickedBottle(); }); // typing again means it's no longer the bottle you picked
+  attachTypeahead(form.name, document.getElementById('suggestions'),
+    function(q){ return getJson('/api/bottles/search?q=' + encodeURIComponent(q)); },
+    function(b){
+      return {
+        title: b.name + (b.vintage ? ' ' + b.vintage : ''),
+        meta: [CATEGORY_LABELS[b.category], b.maker, b.abv ? b.abv + '% ABV' : ''].filter(Boolean).join(' · '),
+        badge: b.quantity > 0 ? b.quantity + ' on hand' : ''
+      };
+    },
+    pickBottle);
 
-  function searchBottles(q){
-    var seq = ++searchSeq;
-    fetch('/api/bottles/search?q=' + encodeURIComponent(q)).then(function(r){
-      return r.ok ? r.json() : [];
-    }).then(function(rows){
-      if (seq !== searchSeq) return; // a newer search has started
-      suggestionRows = rows;
-      activeSuggestion = -1;
-      renderSuggestions();
-    }).catch(function(){});
-  }
-
-  function renderSuggestions(){
-    suggestionsEl.textContent = '';
-    suggestionRows.forEach(function(b, i){
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'suggestion' + (i === activeSuggestion ? ' active' : '');
-      btn.setAttribute('role', 'option');
-      btn.dataset.index = i;
-      if (b.quantity > 0) {
-        var badge = document.createElement('span');
-        badge.className = 'suggestion-badge';
-        badge.textContent = b.quantity + ' on hand';
-        btn.appendChild(badge);
-      }
-      var name = document.createElement('div');
-      name.className = 'suggestion-name';
-      name.textContent = b.name + (b.vintage ? ' ' + b.vintage : '');
-      var meta = document.createElement('div');
-      meta.className = 'suggestion-meta';
-      meta.textContent = [CATEGORY_LABELS[b.category], b.maker, b.abv ? b.abv + '% ABV' : ''].filter(Boolean).join(' · ');
-      btn.appendChild(name);
-      btn.appendChild(meta);
-      suggestionsEl.appendChild(btn);
-    });
-    suggestionsEl.hidden = !suggestionRows.length;
-    form.name.setAttribute('aria-expanded', String(!suggestionsEl.hidden));
-  }
-
-  function hideSuggestions(){
-    suggestionRows = [];
-    renderSuggestions();
-  }
-
-  // mousedown (not click) so it lands before the input's blur hides the list.
-  suggestionsEl.addEventListener('mousedown', function(e){
-    var btn = e.target.closest('.suggestion');
-    if (!btn) return;
-    e.preventDefault();
-    pickBottle(suggestionRows[Number(btn.dataset.index)]);
-  });
-  form.name.addEventListener('blur', function(){ setTimeout(hideSuggestions, 150); });
-  form.name.addEventListener('keydown', function(e){
-    if (suggestionsEl.hidden) return;
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      var last = suggestionRows.length - 1;
-      if (e.key === 'ArrowDown') activeSuggestion = activeSuggestion >= last ? 0 : activeSuggestion + 1;
-      else activeSuggestion = activeSuggestion <= 0 ? last : activeSuggestion - 1;
-      renderSuggestions();
-    } else if (e.key === 'Enter' && activeSuggestion >= 0) {
-      e.preventDefault();
-      pickBottle(suggestionRows[activeSuggestion]);
-    } else if (e.key === 'Escape') {
-      hideSuggestions();
-    }
-  });
+  // Maker: makers already in the database, narrowed to the chosen category.
+  attachTypeahead(form.maker, document.getElementById('makerSuggestions'),
+    function(q){
+      return getJson('/api/makers?q=' + encodeURIComponent(q) + (form.category.value ? '&category=' + form.category.value : ''));
+    },
+    function(m){ return { title: m.maker, meta: m.bottles === 1 ? '1 bottle' : m.bottles + ' bottles' }; },
+    function(m){ form.maker.value = m.maker; });
 
   // Fill the form from the picked bottle and save onto that row instead of adding a duplicate.
   function pickBottle(b){
-    hideSuggestions();
     form.category.value = b.category;
     form.category.dispatchEvent(new Event('change'));
     form.name.value = b.name;
