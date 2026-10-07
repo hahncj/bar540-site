@@ -8,6 +8,7 @@
 <link rel="icon" type="image/png" href="/favicon-32.png?v=2" sizes="32x32">
 <link rel="icon" type="image/png" href="/icon-192.png?v=2" sizes="192x192">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2">
+<script src="/stir.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -293,7 +294,7 @@
   }
 
   function findStockPhotos(name){
-    stockStatus.textContent = 'Looking for stock photos…';
+    showStir(stockStatus, 'Looking for stock photos…');
     findStockBtn.disabled = true;
     fetch('/api/stock-photos?q=' + encodeURIComponent(name)).then(function(r){
       return r.json().then(function(data){ return { status: r.status, data: data }; });
@@ -515,7 +516,7 @@
   }
 
   function identifyFromPhoto(file){
-    lookupStatus.textContent = 'Reading the label…';
+    showStir(lookupStatus, 'Reading the label…');
     resizeForAi(file).then(function(blob){
       runIdentify(blob, lookupStatus);
     }, function(){
@@ -551,7 +552,7 @@
     if (form.name.value.trim()) body.append('name', form.name.value.trim());
     identifying = true;
     identifyBtn.disabled = fillFromNameBtn.disabled = true;
-    statusEl.textContent = photoBlob ? 'Reading the label…' : 'Looking it up…';
+    showStir(statusEl, photoBlob ? 'Reading the label…' : 'Looking it up…');
     fetch('/api/identify', { method: 'POST', body: body }).then(function(r){
       return r.json().then(function(data){ return { ok: r.ok, status: r.status, data: data }; });
     }).then(function(res){
@@ -608,7 +609,7 @@
 
   async function onScanSuccess(decodedText){
     await stopScanner();
-    lookupStatus.textContent = 'Looking up ' + decodedText + '...';
+    showStir(lookupStatus, 'Looking up ' + decodedText + '…');
     clearStockImages();
     try {
       var res = await fetch('/api/lookup?upc=' + encodeURIComponent(decodedText));
@@ -633,7 +634,7 @@
   form.addEventListener('submit', async function(e){
     e.preventDefault();
     status.className = '';
-    status.textContent = 'Saving...';
+    showStir(status, 'Adding it to the Cellar…');
     var submitBtn = form.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
     try {

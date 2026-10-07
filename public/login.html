@@ -8,6 +8,7 @@
 <link rel="icon" type="image/png" href="/favicon-32.png?v=2" sizes="32x32">
 <link rel="icon" type="image/png" href="/icon-192.png?v=2" sizes="192x192">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2">
+<script src="/stir.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -70,7 +71,8 @@
   }
 
   function onCredential(response){
-    showStatus('Signing in...');
+    status.className = '';
+    showStir(status, 'Signing you in…');
     fetch('/api/login', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

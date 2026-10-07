@@ -8,6 +8,7 @@
 <link rel="icon" type="image/png" href="/favicon-32.png?v=2" sizes="32x32">
 <link rel="icon" type="image/png" href="/icon-192.png?v=2" sizes="192x192">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=2">
+<script src="/stir.js"></script>
 <meta name="description" content="Bar 540 — Est. 2012. The family home bar. Time to relax.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -546,7 +547,7 @@ function formatDate(iso){
       <p>Straight from the kegerator. Give a handle a pull.</p>
     </div>
     <div class="tap-tower" id="tapTower">
-      <div class="tap-tower-msg">Checking the taps&hellip;</div>
+      <div class="tap-tower-msg"><stir-loader size="large" label="Checking the taps&hellip;"></stir-loader></div>
     </div>
   </div>
 </section>
@@ -951,7 +952,7 @@ function formatDate(iso){
     </div>
 
     <div id="cellarContent">
-      <div class="cellar-loading">Loading the cellar&hellip;</div>
+      <div class="cellar-loading"><stir-loader size="large" label="Loading the cellar&hellip;"></stir-loader></div>
     </div>
 
     <div class="cellar-cta" id="cellarCta" hidden>
