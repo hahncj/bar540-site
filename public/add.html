@@ -93,6 +93,13 @@
   .suggestion-badge{float:right; margin-left:8px; font-size:11px; font-weight:700; color:var(--teal); white-space:nowrap;}
   .match-note{color:var(--teal);}
   .linkish{background:none; border:none; color:var(--teal); font:inherit; font-size:13px; text-decoration:underline; cursor:pointer; margin-top:8px; display:none;}
+  .dup-prompt{
+    background:var(--panel); border:2px solid var(--gold); border-radius:16px;
+    padding:20px; margin-top:20px;
+  }
+  .dup-prompt h2{font-family:'Fredoka',sans-serif; font-weight:600; font-size:18px; margin-bottom:6px;}
+  .dup-prompt p{color:var(--cream-dim); font-size:14px;}
+  .dup-prompt .btn{margin-top:16px;}
   .success-panel{
     text-align:center; background:var(--panel); border:2px solid var(--teal);
     border-radius:16px; padding:36px 24px; margin-top:20px; display:none;
@@ -109,8 +116,8 @@
 <body>
 <div class="wrap">
   <a class="back" href="/#cellar">&larr; Back to the Cellar</a>
-  <h1>Add a Bottle</h1>
-  <div class="sub">Snap the label and let AI fill in the details, scan a barcode, or just type it in.</div>
+  <h1 id="pageTitle">Add a Bottle</h1>
+  <div class="sub" id="pageSub">Snap the label and let AI fill in the details, scan a barcode, or just type it in.</div>
 
   <button type="button" class="btn-secondary btn-ai" id="identifyBtn">&#128247; Snap the Label &mdash; AI Fills It In</button>
   <button type="button" class="btn-secondary" id="scanBtn">Scan Barcode</button>
@@ -179,18 +186,26 @@
       <button type="button" class="btn-secondary" id="takePhotoBtn">Take Photo</button>
       <button type="button" class="btn-secondary" id="choosePhotoBtn">Choose Photo</button>
     </div>
+    <button type="button" class="linkish" id="removePhotoBtn">Remove photo</button>
     <button type="button" class="linkish" id="findStockBtn">&#128269; Find stock photos for this bottle</button>
     <div class="ai-status" id="stockStatus"></div>
     <input type="file" name="photo" id="photoInput" accept="image/*" hidden>
 
-    <button type="submit" class="btn">Add to the Cellar</button>
+    <button type="submit" class="btn" id="submitBtn">Add to the Cellar</button>
   </form>
 
   <div id="status"></div>
 
+  <div class="dup-prompt" id="dupPrompt" role="alertdialog" aria-labelledby="dupTitle" hidden>
+    <h2 id="dupTitle"></h2>
+    <p id="dupText"></p>
+    <button type="button" class="btn" id="dupAddBtn"></button>
+    <button type="button" class="btn-secondary" id="dupRenameBtn">It's a different bottle &mdash; change the name</button>
+  </div>
+
   <div class="success-panel" id="successPanel">
     <div class="check">&#10003;</div>
-    <h2>Added to the Cellar</h2>
+    <h2 id="successTitle">Added to the Cellar</h2>
     <p>Taking you back&hellip;</p>
   </div>
 </div>
@@ -198,8 +213,11 @@
 <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
   // Admin-only page: bounce to sign-in if there's no session. (The API enforces this too.)
+  // ?id=N edits that bottle instead of adding one: same form, saved with PUT /api/bottles/N.
+  var editId = new URLSearchParams(location.search).get('id');
+  var signInUrl = '/login.html?next=' + encodeURIComponent(location.pathname + location.search);
   fetch('/api/session').then(function(r){ return r.json(); }).then(function(s){
-    if (!s.authed) location.replace('/login.html?next=' + encodeURIComponent('/add.html'));
+    if (!s.authed) location.replace(signInUrl);
   });
 
   var form = document.getElementById('bottleForm');
@@ -228,7 +246,9 @@
   var ownPhotoUrl = null;  // object URL for the photo you took or chose
   var stockUrls = [];      // stock images that actually load
   var photoChoice = null;  // 'own', a stock image URL, or null
-  var savedPhotoUrl = null; // photo of the bottle picked from the type-ahead; kept unless you choose another
+  var savedPhotoUrl = null; // photo of the bottle picked from the type-ahead (or being edited); kept unless you choose another
+  var removePhotoBtn = document.getElementById('removePhotoBtn');
+  var removeSavedPhoto = false; // editing: drop the bottle's photo on save, even if nothing replaces it
 
   function renderPhoto(){
     if (photoChoice) {
@@ -243,6 +263,7 @@
     } else {
       photoPreview.style.display = 'none';
     }
+    removePhotoBtn.style.display = editId && photoPreview.style.display === 'block' ? 'inline-block' : 'none';
     // Thumbnails only when there's a choice to make.
     photoChoices.textContent = '';
     if (!stockUrls.length) return;
@@ -264,6 +285,17 @@
     btn.appendChild(tag);
     return btn;
   }
+
+  // Editing only: clear whatever photo is showing. Stock thumbnails stay, so you can still pick one.
+  removePhotoBtn.addEventListener('click', function(){
+    if (savedPhotoUrl) removeSavedPhoto = true;
+    savedPhotoUrl = null;
+    photoChoice = null;
+    if (ownPhotoUrl) URL.revokeObjectURL(ownPhotoUrl);
+    ownPhotoUrl = null;
+    photoInput.value = '';
+    renderPhoto();
+  });
 
   photoChoices.addEventListener('click', function(e){
     var tile = e.target.closest('.photo-choice');
@@ -300,7 +332,7 @@
     fetch('/api/stock-photos?q=' + encodeURIComponent(name)).then(function(r){
       return r.json().then(function(data){ return { status: r.status, data: data }; });
     }).then(function(res){
-      if (res.status === 401) { location.href = '/login.html?next=' + encodeURIComponent('/add.html'); return; }
+      if (res.status === 401) { location.href = signInUrl; return; }
       var images = (res.data && res.data.images) || [];
       if (res.data && res.data.error) stockStatus.textContent = res.data.error;
       else if (!images.length) stockStatus.textContent = 'No stock photos found for ' + name + '.';
@@ -431,17 +463,20 @@
   var matchNote = document.getElementById('matchNote');
 
   // Name: every bottle in the database (on hand, finished, and the starter catalog).
-  form.name.addEventListener('input', function(){ unlinkPickedBottle(); }); // typing again means it's no longer the bottle you picked
-  attachTypeahead(form.name, document.getElementById('suggestions'),
-    function(q){ return getJson('/api/bottles/search?q=' + encodeURIComponent(q)); },
-    function(b){
-      return {
-        title: b.name + (b.vintage ? ' ' + b.vintage : ''),
-        meta: [CATEGORY_LABELS[b.category], b.maker, b.abv ? b.abv + '% ABV' : ''].filter(Boolean).join(' · '),
-        badge: b.quantity > 0 ? b.quantity + ' on hand' : ''
-      };
-    },
-    pickBottle);
+  // Not when editing: picking another bottle there would mean merging two rows, which this form doesn't do.
+  if (!editId) {
+    form.name.addEventListener('input', function(){ unlinkPickedBottle(); }); // typing again means it's no longer the bottle you picked
+    attachTypeahead(form.name, document.getElementById('suggestions'),
+      function(q){ return getJson('/api/bottles/search?q=' + encodeURIComponent(q)); },
+      function(b){
+        return {
+          title: b.name + (b.vintage ? ' ' + b.vintage : ''),
+          meta: [CATEGORY_LABELS[b.category], b.maker, b.abv ? b.abv + '% ABV' : ''].filter(Boolean).join(' · '),
+          badge: b.quantity > 0 ? b.quantity + ' on hand' : ''
+        };
+      },
+      pickBottle);
+  }
 
   // Maker: makers already in the database, narrowed to the chosen category.
   attachTypeahead(form.maker, document.getElementById('makerSuggestions'),
@@ -477,6 +512,98 @@
     savedPhotoUrl = null;
     renderPhoto();
   }
+
+  // --- Edit mode: load the bottle into the form ---
+  if (editId) {
+    document.title = 'Edit Bottle — Bar 540';
+    document.getElementById('pageTitle').textContent = 'Edit Bottle';
+    document.getElementById('pageSub').textContent = 'Change any of the details, or swap the photo for one of your own or a stock shot.';
+    document.getElementById('submitBtn').textContent = 'Save Changes';
+    document.getElementById('successTitle').textContent = 'Saved';
+    form.quantity.min = 0; // 0 = finished; it leaves the Cellar but the type-ahead still knows it
+    form.style.visibility = 'hidden';
+    showStir(lookupStatus, 'Fetching the bottle…');
+    fetch('/api/bottles/' + encodeURIComponent(editId)).then(function(r){
+      return r.json().then(function(data){ return { ok: r.ok, status: r.status, data: data }; });
+    }).then(function(res){
+      if (res.status === 401) { location.href = signInUrl; return; }
+      if (!res.ok) { lookupStatus.textContent = (res.data && res.data.error) || "Couldn't load that bottle."; return; }
+      var b = res.data;
+      form.category.value = b.category;
+      form.category.dispatchEvent(new Event('change'));
+      form.name.value = b.name;
+      form.maker.value = b.maker || '';
+      form.abv.value = b.abv === null ? '' : b.abv;
+      form.vintage.value = b.vintage || '';
+      form.quantity.value = b.quantity;
+      form.purchased_on.value = b.purchased_on || '';
+      form.notes.value = b.notes || '';
+      savedPhotoUrl = b.photo_url || null;
+      renderPhoto();
+      updateNameLinks();
+      lookupStatus.textContent = '';
+      form.style.visibility = '';
+    }).catch(function(){
+      lookupStatus.textContent = "Couldn't load that bottle — check your connection and reload.";
+    });
+  }
+
+  // --- Duplicate name on save (409 from POST /api/bottles): add to that bottle, or rename this one ---
+  var dupPrompt = document.getElementById('dupPrompt');
+  var dupAddBtn = document.getElementById('dupAddBtn');
+  var pendingDuplicate = null;
+
+  function showDuplicate(b){
+    pendingDuplicate = b;
+    var label = b.name + (b.vintage ? ' ' + b.vintage : '');
+    var adding = Number(form.quantity.value) || 1;
+    document.getElementById('dupTitle').textContent = b.quantity > 0
+      ? 'You already have ' + label
+      : label + ' is already in the database';
+    document.getElementById('dupText').textContent = b.quantity > 0
+      ? b.quantity + ' on hand' + (b.maker ? ' (' + b.maker + ')' : '') + '. Add to that count instead of listing it twice?'
+      : "It's not on hand right now. Put it back in the Cellar instead of listing it twice?";
+    dupAddBtn.textContent = b.quantity > 0
+      ? 'Add ' + adding + ' more (' + (b.quantity + adding) + ' total)'
+      : 'Put it back in the Cellar';
+    dupPrompt.hidden = false;
+    saveStatus.textContent = '';
+    dupPrompt.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function hideDuplicate(){
+    pendingDuplicate = null;
+    dupPrompt.hidden = true;
+  }
+
+  // Save onto the existing row. Blank fields take that bottle's values so they aren't wiped; anything you filled in wins.
+  dupAddBtn.addEventListener('click', function(){
+    var b = pendingDuplicate;
+    if (!b) return;
+    hideDuplicate();
+    form.name.value = b.name;
+    [['maker', b.maker], ['abv', b.abv], ['notes', b.notes]].forEach(function(f){
+      if (!String(form[f[0]].value).trim() && f[1] !== null && f[1] !== undefined) form[f[0]].value = f[1];
+    });
+    if (b.category === 'wine' && !form.vintage.value && b.vintage) form.vintage.value = b.vintage;
+    existingIdInput.value = b.id;
+    matchNote.textContent = b.quantity > 0
+      ? 'You already have ' + b.quantity + ' — saving adds to that count.'
+      : 'Already in the database — saving puts it back in the Cellar.';
+    savedPhotoUrl = b.photo_url || null;
+    renderPhoto();
+    form.requestSubmit();
+  });
+
+  document.getElementById('dupRenameBtn').addEventListener('click', function(){
+    hideDuplicate();
+    saveStatus.className = '';
+    saveStatus.textContent = 'Give it a name that sets it apart — the edition, cask, or year — then save again.';
+    form.name.focus();
+    form.name.select();
+  });
+
+  form.name.addEventListener('input', hideDuplicate);
 
   // --- AI lookup: label photo and/or typed name -> form fields (POST /api/identify) ---
   var identifyBtn = document.getElementById('identifyBtn');
@@ -557,7 +684,7 @@
     fetch('/api/identify', { method: 'POST', body: body }).then(function(r){
       return r.json().then(function(data){ return { ok: r.ok, status: r.status, data: data }; });
     }).then(function(res){
-      if (res.status === 401) { location.href = '/login.html?next=' + encodeURIComponent('/add.html'); return; }
+      if (res.status === 401) { location.href = signInUrl; return; }
       if (!res.ok) { statusEl.textContent = (res.data && res.data.error) || 'AI lookup failed — fill in the details by hand.'; return; }
       var d = res.data;
       if (!d.name) { statusEl.textContent = "Couldn't tell what that is — fill in the details by hand."; return; }
@@ -634,8 +761,9 @@
 
   form.addEventListener('submit', async function(e){
     e.preventDefault();
+    hideDuplicate();
     saveStatus.className = '';
-    showStir(saveStatus, 'Adding it to the Cellar…');
+    showStir(saveStatus, editId ? 'Saving your changes…' : 'Adding it to the Cellar…');
     var submitBtn = form.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
     try {
@@ -644,7 +772,10 @@
         body.delete('photo');
         body.set('stock_image_url', photoChoice);
       }
-      var res = await fetch('/api/bottles', { method: 'POST', body: body });
+      if (editId && removeSavedPhoto) body.set('remove_photo', '1');
+      var res = editId
+        ? await fetch('/api/bottles/' + encodeURIComponent(editId), { method: 'PUT', body: body })
+        : await fetch('/api/bottles', { method: 'POST', body: body });
       var data = await res.json();
       if (res.ok) {
         form.style.display = 'none';
@@ -655,8 +786,10 @@
         setTimeout(function(){ window.location.href = '/#cellar'; }, 1400);
         return;
       } else if (res.status === 401) {
-        location.href = '/login.html?next=' + encodeURIComponent('/add.html');
+        location.href = signInUrl;
         return;
+      } else if (res.status === 409 && data.duplicate) {
+        showDuplicate(data.duplicate);
       } else {
         saveStatus.className = 'err';
         saveStatus.textContent = data.error || 'Something went wrong.';

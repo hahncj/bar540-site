@@ -90,6 +90,66 @@ async function storePhoto(env, bytes, contentType, ext) {
 }
 
 // Download a stock product image. Returns null unless it's a reasonably sized image over http(s).
+// Bottle fields from the Add/Edit form, validated. Returns the fields, or { error }.
+// minQuantity: 1 when adding, 0 when editing (0 = finished, kept for the type-ahead).
+function readBottleFields(form, minQuantity) {
+  const category = form.get("category");
+  const name = (form.get("name") || "").trim();
+  const vintageRaw = form.get("vintage");
+  const quantityRaw = form.get("quantity");
+  const fields = {
+    category,
+    name,
+    maker: (form.get("maker") || "").trim() || null,
+    notes: (form.get("notes") || "").trim() || null,
+    abv: form.get("abv") ? Number(form.get("abv")) : null,
+    purchasedOn: form.get("purchased_on") || null,
+    vintage: vintageRaw && category === "wine" ? Number(vintageRaw) : null,
+    quantity: quantityRaw ? Number(quantityRaw) : 1,
+  };
+  if (!["whiskey", "wine", "beer"].includes(category) || !name) return { error: "Category and name are required" };
+  if (fields.abv !== null && !(fields.abv >= 0 && fields.abv <= 100)) return { error: "ABV must be a percentage" };
+  if (fields.purchasedOn && !/^\d{4}-\d{2}-\d{2}$/.test(fields.purchasedOn)) return { error: "Purchase date must be YYYY-MM-DD" };
+  if (fields.vintage !== null && !(Number.isInteger(fields.vintage) && fields.vintage >= 1800 && fields.vintage <= 2100)) return { error: "Vintage must be a year" };
+  if (!(Number.isInteger(fields.quantity) && fields.quantity >= minQuantity)) {
+    return { error: `Quantity must be a whole number of ${minQuantity} or more` };
+  }
+  return fields;
+}
+
+// Another bottle with this name in this category (case and outer spaces ignored); for wine, the same vintage.
+// anyFinishedVintage: also match a finished wine of any vintage, since adding can reuse that row.
+// excludeId: the bottle being edited, which can't clash with itself.
+function findSameName(env, { category, name, vintage }, { anyFinishedVintage = false, excludeId = null } = {}) {
+  const wineClause = anyFinishedVintage ? " AND (vintage IS ? OR quantity = 0)" : " AND vintage IS ?";
+  return env.DB.prepare(
+    "SELECT id, category, name, maker, notes, abv, photo_url, vintage, quantity FROM bottles " +
+    "WHERE category = ? AND lower(trim(name)) = lower(trim(?))" +
+    (category === "wine" ? wineClause : "") +
+    (excludeId !== null ? " AND id != ?" : "") +
+    " ORDER BY quantity > 0 DESC LIMIT 1"
+  ).bind(category, name, ...(category === "wine" ? [vintage] : []), ...(excludeId !== null ? [excludeId] : [])).first();
+}
+
+// The form's photo: an upload wins; otherwise a picked stock image. Returns its /photos/ URL, or null.
+async function storeFormPhoto(env, form) {
+  const photo = form.get("photo");
+  if (photo && typeof photo === "object" && photo.size > 0) {
+    const nameParts = (photo.name || "bottle.jpg").split(".");
+    const ext = (nameParts.length > 1 ? nameParts.pop() : "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+    return storePhoto(env, await photo.arrayBuffer(), photo.type || "image/jpeg", ext);
+  }
+  if (form.get("stock_image_url")) {
+    // Copy it into R2 so the cellar doesn't depend on a third-party URL staying alive.
+    // Best effort: if the download fails, the bottle is still saved, just without a new photo.
+    try {
+      const stock = await fetchStockImage(form.get("stock_image_url"));
+      if (stock) return storePhoto(env, stock.bytes, stock.contentType, stock.ext);
+    } catch (e) {}
+  }
+  return null;
+}
+
 async function fetchStockImage(rawUrl) {
   const src = new URL(rawUrl);
   if (src.protocol !== "https:" && src.protocol !== "http:") return null;
@@ -196,29 +256,9 @@ export default {
         });
       }
 
-      const category = form.get("category");
-      const name = form.get("name");
-      const maker = form.get("maker") || null;
-      const notes = form.get("notes") || null;
-      const abvRaw = form.get("abv");
-      const abv = abvRaw ? Number(abvRaw) : null;
-      const purchasedOn = form.get("purchased_on") || null;
-      const vintageRaw = form.get("vintage");
-      const vintage = vintageRaw && category === "wine" ? Number(vintageRaw) : null;
-      const quantityRaw = form.get("quantity");
-      const quantity = quantityRaw ? Number(quantityRaw) : 1;
-
-      if (!category || !name) {
-        return new Response(JSON.stringify({ error: "Category and name are required" }), {
-          status: 400,
-          headers: { "content-type": "application/json" },
-        });
-      }
-
-      // An uploaded photo wins; otherwise fall back to the stock image from the barcode lookup.
-      if (purchasedOn && !/^\d{4}-\d{2}-\d{2}$/.test(purchasedOn)) return jsonError("Purchase date must be YYYY-MM-DD", 400);
-      if (vintage !== null && !(Number.isInteger(vintage) && vintage >= 1800 && vintage <= 2100)) return jsonError("Vintage must be a year", 400);
-      if (!(Number.isInteger(quantity) && quantity >= 1)) return jsonError("Quantity must be a whole number of 1 or more", 400);
+      const fields = readBottleFields(form, 1);
+      if (fields.error) return jsonError(fields.error, 400);
+      const { category, name, maker, notes, abv, purchasedOn, vintage, quantity } = fields;
 
       // Picked from the type-ahead: add to that row instead of creating a duplicate.
       let existing = null;
@@ -230,20 +270,17 @@ export default {
         if (category === "wine" && existing.quantity > 0 && vintage !== existing.vintage) existing = null;
       }
 
-      let photo_url = null;
-      const photo = form.get("photo");
-      if (photo && typeof photo === "object" && photo.size > 0) {
-        const nameParts = (photo.name || "bottle.jpg").split(".");
-        const ext = (nameParts.length > 1 ? nameParts.pop() : "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
-        photo_url = await storePhoto(env, await photo.arrayBuffer(), photo.type || "image/jpeg", ext);
-      } else if (form.get("stock_image_url")) {
-        // Copy it into R2 so the cellar doesn't depend on a third-party URL staying alive.
-        // Best effort: if the download fails, the bottle is still saved, just without a photo.
-        try {
-          const stock = await fetchStockImage(form.get("stock_image_url"));
-          if (stock) photo_url = await storePhoto(env, stock.bytes, stock.contentType, stock.ext);
-        } catch (e) {}
+      // Not picked from the type-ahead but the name's already taken: ask before making a second row.
+      // The form then either adds to that bottle (resubmits with existing_id) or changes the name.
+      // Checked before the photo upload so a rejected save doesn't leave a file in R2.
+      if (!existing) {
+        const duplicate = await findSameName(env, fields, { anyFinishedVintage: true });
+        if (duplicate) {
+          return Response.json({ error: "You already have a bottle with that name", duplicate }, { status: 409 });
+        }
       }
+
+      const photo_url = await storeFormPhoto(env, form);
 
       if (existing) {
         // A new photo replaces the old one (and the old file goes); otherwise keep what it had.
@@ -262,6 +299,53 @@ export default {
       ).bind(category, name, maker, notes, abv, photo_url, purchasedOn, vintage, quantity).first();
 
       return Response.json({ ok: true, id: row.id });
+    }
+
+    // --- One bottle, for the Edit form (any quantity, including finished ones) ---
+    if (url.pathname.startsWith("/api/bottles/") && request.method === "GET") {
+      if (!session) return jsonError("Sign in to edit bottles", 401);
+      const id = url.pathname.replace("/api/bottles/", "");
+      const row = await env.DB.prepare(
+        "SELECT id, category, name, maker, notes, abv, photo_url, added_at, purchased_on, vintage, quantity FROM bottles WHERE id = ?"
+      ).bind(id).first();
+      if (!row) return jsonError("That bottle isn't in the database any more", 404);
+      return Response.json(row);
+    }
+
+    // --- Edit a bottle: every field (multipart, same as adding), plus a new photo or remove_photo=1 ---
+    if (url.pathname.startsWith("/api/bottles/") && request.method === "PUT") {
+      if (!session) return jsonError("Sign in to edit bottles", 401);
+      const id = Number(url.pathname.replace("/api/bottles/", ""));
+      let form;
+      try {
+        form = await request.formData();
+      } catch (e) {
+        return jsonError("Invalid form submission", 400);
+      }
+      const fields = readBottleFields(form, 0);
+      if (fields.error) return jsonError(fields.error, 400);
+
+      const current = await env.DB.prepare("SELECT id, photo_url FROM bottles WHERE id = ?").bind(id).first();
+      if (!current) return jsonError("That bottle isn't in the database any more", 404);
+      // Renaming onto another bottle would make two rows for one bottle; checked before any photo upload.
+      const clash = await findSameName(env, fields, { excludeId: id });
+      if (clash) {
+        return jsonError(`Another bottle is already called ${clash.name}${clash.vintage ? " " + clash.vintage : ""} — pick a name that sets this one apart`, 409);
+      }
+
+      // A new photo replaces the old one; remove_photo clears it; otherwise it stays. The old file goes either way.
+      const newPhoto = await storeFormPhoto(env, form);
+      const removePhoto = form.get("remove_photo") === "1";
+      const photo_url = newPhoto || (removePhoto ? null : current.photo_url);
+      if (current.photo_url && photo_url !== current.photo_url) {
+        try { await env.PHOTOS.delete(current.photo_url.replace("/photos/", "")); } catch (e) {}
+      }
+
+      const { category, name, maker, notes, abv, purchasedOn, vintage, quantity } = fields;
+      await env.DB.prepare(
+        "UPDATE bottles SET category = ?, name = ?, maker = ?, notes = ?, abv = ?, photo_url = ?, purchased_on = ?, vintage = ?, quantity = ? WHERE id = ?"
+      ).bind(category, name, maker, notes, abv, photo_url, purchasedOn, vintage, quantity, id).run();
+      return Response.json({ ok: true, id });
     }
 
     // --- Change how many of a bottle are on hand ---

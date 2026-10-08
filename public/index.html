@@ -522,6 +522,13 @@
     padding:6px 14px; cursor:pointer;
   }
   .bottle-delete:hover{background:var(--coral); color:#fff;}
+  .bottle-admin-actions{display:flex; flex-wrap:wrap; gap:10px; margin-top:14px;}
+  .bottle-admin-actions .bottle-delete{margin-top:0;}
+  .bottle-edit{
+    font-size:12px; font-weight:600; text-decoration:none;
+    color:var(--teal); border:1px solid var(--teal); border-radius:20px; padding:6px 14px;
+  }
+  .bottle-edit:hover{background:var(--teal); color:var(--bg-deep);}
   .cellar-empty, .cellar-loading{text-align:center; color:var(--cream-dim); padding:40px 20px;}
   .cellar-cta{text-align:center; margin-top:32px;}
   .btn-coral{
@@ -1350,7 +1357,10 @@ function formatDate(iso){
                 '<button type="button" class="qty-btn" data-id="' + b.id + '" data-delta="1" title="One more">+</button>' +
               '</div>' +
               (b.purchased_on ? '<div class="bottle-purchased">Purchased ' + escapeHtml(formatDate(b.purchased_on)) + '</div>' : '') +
-              '<button class="bottle-delete" data-id="' + b.id + '" data-name="' + escapeHtml(b.name) + '" type="button">Delete entirely</button>' +
+              '<div class="bottle-admin-actions">' +
+                '<a class="bottle-edit" href="/add.html?id=' + encodeURIComponent(b.id) + '">Edit details</a>' +
+                '<button class="bottle-delete" data-id="' + b.id + '" data-name="' + escapeHtml(b.name) + '" type="button">Delete entirely</button>' +
+              '</div>' +
             '</div>'
           : '') +
       '</div>';
