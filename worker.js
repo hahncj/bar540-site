@@ -7,7 +7,7 @@ import {
   readSession,
   verifyGoogleIdToken,
 } from "./auth.js";
-import { identifyBottle, IdentifyError } from "./ai.js";
+import { AiError, identifyBottle, recommendPour } from "./ai.js";
 
 function jsonError(message, status) {
   return new Response(JSON.stringify({ error: message }), {
@@ -77,6 +77,22 @@ const SENSORS = {
   tap2_level_pct: [0, 100],
 };
 const SENSOR_HISTORY_DAYS = 90;
+
+// The neon OPEN sign goes dark on its own this long after it was last switched on, so a forgotten
+// sign doesn't say OPEN all the next day.
+const BAR_AUTO_CLOSE_HOURS = 6;
+
+// settings.updated_at is UTC "YYYY-MM-DD HH:MM:SS".
+function barStatus(row) {
+  const flippedAt = row ? Date.parse(row.updated_at.replace(" ", "T") + "Z") : NaN;
+  const closesAt = flippedAt + BAR_AUTO_CLOSE_HOURS * 3600000;
+  const open = !!row && row.value === "open" && Date.now() < closesAt;
+  return {
+    open,
+    opened_at: open ? new Date(flippedAt).toISOString() : null,
+    closes_at: open ? new Date(closesAt).toISOString() : null,
+  };
+}
 
 const MAX_STOCK_IMAGE_BYTES = 5 * 1024 * 1024;
 // Gallery photos are resized in the browser first; this is a backstop.
@@ -456,12 +472,74 @@ export default {
       if (levelPct !== null && !(Number.isInteger(levelPct) && levelPct >= 0 && levelPct <= 100)) return jsonError("Keg level must be a whole percent from 0 to 100", 400);
       if (tappedOn && !/^\d{4}-\d{2}-\d{2}$/.test(tappedOn)) return jsonError("Tapped date must be YYYY-MM-DD", 400);
 
+      const current = await env.DB.prepare("SELECT status, beer, brewery, style, abv, level_pct, tapped_on FROM taps WHERE id = ?").bind(id).first();
+      if (!current) return jsonError("There's no tap " + id, 404);
+
+      const statements = [];
+      // The keg that was pouring is done if the tap goes dry or a different beer goes on: log it.
+      // (Fixing the spelling or case of the same beer's name doesn't count.)
+      const sameBeer = (a, b) => (a || "").toLowerCase().replace(/\s+/g, " ") === (b || "").toLowerCase().replace(/\s+/g, " ");
+      if (current.status === "pouring" && current.beer && (status === "empty" || !sameBeer(beer, current.beer))) {
+        statements.push(
+          env.DB.prepare("INSERT INTO keg_history (tap_id, beer, brewery, style, abv, tapped_on) VALUES (?, ?, ?, ?, ?, ?)")
+            .bind(id, current.beer, current.brewery, current.style, current.abv, current.tapped_on)
+        );
+      }
+      // A keg level typed in by hand is a reading too, so the kick forecast works before there's a sensor.
+      const levelSensor = `tap${id}_level_pct`;
+      if (status === "pouring" && levelPct !== null && levelPct !== current.level_pct && SENSORS[levelSensor]) {
+        statements.push(env.DB.prepare("INSERT INTO sensor_readings (sensor, value) VALUES (?, ?)").bind(levelSensor, levelPct));
+      }
+      statements.push(
+        env.DB.prepare(
+          "UPDATE taps SET status = ?, beer = ?, brewery = ?, style = ?, abv = ?, level_pct = ?, tapped_on = ?, updated_at = CURRENT_TIMESTAMP " +
+          "WHERE id = ? RETURNING id, status, beer, brewery, style, abv, level_pct, tapped_on, updated_at"
+        ).bind(status, beer, brewery, style, abv, levelPct, tappedOn, id)
+      );
+      const results = await env.DB.batch(statements);
+      return Response.json(results[results.length - 1].results[0]);
+    }
+
+    // --- Kicked kegs, newest first: { total, history: [...] } ---
+    if (url.pathname === "/api/kegs" && request.method === "GET") {
+      const [count, recent] = await env.DB.batch([
+        env.DB.prepare("SELECT COUNT(*) AS total FROM keg_history"),
+        env.DB.prepare("SELECT id, tap_id, beer, brewery, style, abv, tapped_on, kicked_at FROM keg_history ORDER BY id DESC LIMIT 12"),
+      ]);
+      return Response.json({ total: count.results[0].total, history: recent.results });
+    }
+
+    // --- Remove a keg log entry (one logged by mistake) ---
+    if (url.pathname.startsWith("/api/kegs/") && request.method === "DELETE") {
+      if (!session) return jsonError("Sign in to edit the keg log", 401);
+      const id = url.pathname.replace("/api/kegs/", "");
+      await env.DB.prepare("DELETE FROM keg_history WHERE id = ?").bind(id).run();
+      return Response.json({ ok: true });
+    }
+
+    // --- Is the bar open? The neon sign: { open, opened_at, closes_at } ---
+    if (url.pathname === "/api/status" && request.method === "GET") {
+      const row = await env.DB.prepare("SELECT value, updated_at FROM settings WHERE key = 'bar_status'").first();
+      return Response.json(barStatus(row));
+    }
+
+    // --- Flip the sign: {"open": true} or {"open": false} ---
+    // Takes a session or `Authorization: Bearer <SENSOR_TOKEN>`, so a Shortcut, NFC tag, or smart switch can
+    // flip it too. Switching on an already-open sign restarts the auto-close clock.
+    if (url.pathname === "/api/status" && request.method === "PUT") {
+      if (!session && !(await hasBearerToken(request, await readSecret(env.SENSOR_TOKEN)))) {
+        return jsonError("Sign in or send a sensor token to flip the sign", 401);
+      }
+      let body = null;
+      try {
+        body = await request.json();
+      } catch (e) {}
+      if (!body || typeof body.open !== "boolean") return jsonError('Send {"open": true} or {"open": false}', 400);
       const row = await env.DB.prepare(
-        "UPDATE taps SET status = ?, beer = ?, brewery = ?, style = ?, abv = ?, level_pct = ?, tapped_on = ?, updated_at = CURRENT_TIMESTAMP " +
-        "WHERE id = ? RETURNING id, status, beer, brewery, style, abv, level_pct, tapped_on, updated_at"
-      ).bind(status, beer, brewery, style, abv, levelPct, tappedOn, id).first();
-      if (!row) return jsonError("There's no tap " + id, 404);
-      return Response.json(row);
+        "INSERT INTO settings (key, value, updated_at) VALUES ('bar_status', ?, CURRENT_TIMESTAMP) " +
+        "ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at RETURNING value, updated_at"
+      ).bind(body.open ? "open" : "closed").first();
+      return Response.json(barStatus(row));
     }
 
     // --- Latest kegerator readings: { sensor: { value, recorded_at } } ---
@@ -472,6 +550,19 @@ export default {
       const latest = {};
       for (const r of results) latest[r.sensor] = { value: r.value, recorded_at: r.recorded_at };
       return Response.json(latest);
+    }
+
+    // --- One sensor's history as hourly averages, oldest first: ?sensor=fridge_temp_f&days=30 -> [{ t, v }] ---
+    if (url.pathname === "/api/sensors/history" && request.method === "GET") {
+      const sensor = url.searchParams.get("sensor");
+      if (!SENSORS[sensor]) return jsonError("Unknown sensor", 400);
+      const days = Math.min(SENSOR_HISTORY_DAYS, Math.max(1, Number(url.searchParams.get("days")) || 30));
+      const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 19).replace("T", " ");
+      const { results } = await env.DB.prepare(
+        "SELECT strftime('%Y-%m-%d %H:00:00', recorded_at) AS t, AVG(value) AS v FROM sensor_readings " +
+        "WHERE sensor = ? AND recorded_at >= ? GROUP BY t ORDER BY t"
+      ).bind(sensor, since).all();
+      return Response.json(results);
     }
 
     // --- Record readings, e.g. {"fridge_temp_f": 37.2, "tap1_level_pct": 60} ---
@@ -589,9 +680,49 @@ export default {
         });
         return Response.json(result);
       } catch (e) {
-        if (e instanceof IdentifyError) return jsonError(e.message, e.status);
+        if (e instanceof AiError) return jsonError(e.message, e.status);
         return jsonError("AI lookup failed — try again", 502);
       }
+    }
+
+    // --- AI bartender: {"mood": "something smoky by the fire"} -> one pick from the cellar or the taps ---
+    // Signed-in only (every call costs money). The lists come from the database, not the page, and the
+    // pick is checked against them so the answer is always something actually in the house.
+    if (url.pathname === "/api/recommend" && request.method === "POST") {
+      if (!session) return jsonError("Sign in to ask the bartender", 401);
+      let body = {};
+      try {
+        body = await request.json();
+      } catch (e) {}
+      const mood = typeof body.mood === "string" ? body.mood.trim().slice(0, 200) : "";
+      if (!mood) return jsonError("Tell the bartender what you're in the mood for", 400);
+
+      const [bottleRows, tapRows] = await env.DB.batch([
+        env.DB.prepare("SELECT id, category, name, maker, abv, vintage, notes FROM bottles WHERE quantity > 0 ORDER BY id"),
+        env.DB.prepare("SELECT id, beer, brewery, style, abv FROM taps WHERE status = 'pouring' ORDER BY id"),
+      ]);
+      const bottles = bottleRows.results;
+      const taps = tapRows.results;
+      let pick;
+      try {
+        pick = await recommendPour({ apiKey: await readSecret(env.ANTHROPIC_API_KEY), model: env.CLAUDE_MODEL, bottles, taps, mood });
+      } catch (e) {
+        if (e instanceof AiError) return jsonError(e.message, e.status);
+        return jsonError("The bartender is stumped — try again", 502);
+      }
+      const drink = (pick.source === "tap" ? taps : bottles).find((d) => d.id === pick.id);
+      if (!drink) return jsonError("The bartender reached for something we don't have — try again", 502);
+      return Response.json({
+        source: pick.source,
+        id: drink.id,
+        name: pick.source === "tap" ? drink.beer : drink.name,
+        vintage: pick.source === "tap" ? null : drink.vintage,
+        maker: pick.source === "tap" ? drink.brewery : drink.maker,
+        abv: drink.abv,
+        pitch: pick.pitch,
+        serve: pick.serve,
+        usage: pick.usage,
+      });
     }
 
     // --- Fallback: serve the static site ---

@@ -1,5 +1,6 @@
-// Bottle identification with Claude: a label photo and/or a typed name in, form fields out.
-// Plain fetch against the Messages API (no SDK), so it runs anywhere fetch does.
+// Claude helpers for the site, as plain fetch against the Messages API (no SDK), so it runs anywhere fetch does:
+//   identifyBottle  - a label photo and/or a typed name in, Add-a-Bottle form fields out
+//   recommendPour   - "what should I pour?" answered from what's actually in the house
 
 const API_URL = "https://api.anthropic.com/v1/messages";
 export const DEFAULT_MODEL = "claude-opus-5-5";
@@ -31,28 +32,18 @@ const SCHEMA = {
   additionalProperties: false,
 };
 
-export class IdentifyError extends Error {
+// message: safe to show the user; status: the HTTP status the Worker should answer with.
+export class AiError extends Error {
   constructor(message, status) {
     super(message);
     this.status = status;
   }
 }
 
-// image: { data: base64 string, mediaType: "image/jpeg" | "image/png" | "image/webp" | "image/gif" } or null
-// name: what the user typed, or null. At least one is required.
-export async function identifyBottle({ apiKey, model, image, name }) {
-  if (!apiKey) throw new IdentifyError("AI lookup isn't set up (missing ANTHROPIC_API_KEY)", 500);
-  if (!image && !name) throw new IdentifyError("Send a photo or a name to look up", 400);
-
-  const content = [];
-  if (image) content.push({ type: "image", source: { type: "base64", media_type: image.mediaType, data: image.data } });
-  content.push({
-    type: "text",
-    text: image
-      ? (name ? `Identify this bottle. The person typed: "${name}".` : "Identify this bottle.")
-      : `Identify this product from its name: "${name}".`,
-  });
-
+// One Messages API call that must come back as JSON matching `schema`. Returns the parsed object
+// plus token usage.
+async function askForJson({ apiKey, model, system, content, schema }) {
+  if (!apiKey) throw new AiError("AI isn't set up (missing ANTHROPIC_API_KEY)", 500);
   const resp = await fetch(API_URL, {
     method: "POST",
     headers: {
@@ -65,9 +56,9 @@ export async function identifyBottle({ apiKey, model, image, name }) {
     body: JSON.stringify({
       model: model || DEFAULT_MODEL,
       max_tokens: 16000,
-      system: SYSTEM,
+      system,
       fallbacks: "default",
-      output_config: { effort: "low", format: { type: "json_schema", schema: SCHEMA } },
+      output_config: { effort: "low", format: { type: "json_schema", schema } },
       messages: [{ role: "user", content }],
     }),
   });
@@ -75,22 +66,77 @@ export async function identifyBottle({ apiKey, model, image, name }) {
   const body = await resp.json().catch(() => null);
   if (!resp.ok) {
     const detail = body?.error?.message || `HTTP ${resp.status}`;
-    if (resp.status === 401 || resp.status === 403) throw new IdentifyError("The AI API key was rejected: " + detail, 502);
-    if (resp.status === 429 || resp.status === 529) throw new IdentifyError("The AI service is busy — try again in a minute", 503);
-    throw new IdentifyError("AI lookup failed: " + detail, 502);
+    if (resp.status === 401 || resp.status === 403) throw new AiError("The AI API key was rejected: " + detail, 502);
+    if (resp.status === 429 || resp.status === 529) throw new AiError("The AI service is busy — try again in a minute", 503);
+    throw new AiError("AI request failed: " + detail, 502);
   }
-  if (body.stop_reason === "refusal") throw new IdentifyError("The AI declined to identify that photo", 422);
-  if (body.stop_reason === "max_tokens") throw new IdentifyError("The AI response was cut off — try again", 502);
+  if (body.stop_reason === "refusal") throw new AiError("The AI declined that request", 422);
+  if (body.stop_reason === "max_tokens") throw new AiError("The AI response was cut off — try again", 502);
 
   const text = (body.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
   let result;
   try {
     result = JSON.parse(text);
   } catch (e) {
-    throw new IdentifyError("The AI response wasn't readable — try again", 502);
+    throw new AiError("The AI response wasn't readable — try again", 502);
   }
   return {
     ...result,
     usage: { input_tokens: body.usage?.input_tokens, output_tokens: body.usage?.output_tokens },
   };
+}
+
+// image: { data: base64 string, mediaType: "image/jpeg" | "image/png" | "image/webp" | "image/gif" } or null
+// name: what the user typed, or null. At least one is required.
+export async function identifyBottle({ apiKey, model, image, name }) {
+  if (!image && !name) throw new AiError("Send a photo or a name to look up", 400);
+
+  const content = [];
+  if (image) content.push({ type: "image", source: { type: "base64", media_type: image.mediaType, data: image.data } });
+  content.push({
+    type: "text",
+    text: image
+      ? (name ? `Identify this bottle. The person typed: "${name}".` : "Identify this bottle.")
+      : `Identify this product from its name: "${name}".`,
+  });
+  return askForJson({ apiKey, model, system: SYSTEM, content, schema: SCHEMA });
+}
+
+const BARTENDER_SYSTEM = `You're the bartender at Bar 540, a relaxed family home bar. Someone tells you what they're in the mood for, and you pick ONE drink for them from what's actually in the house: a bottle from the cellar list or a beer on tap. Never suggest anything that isn't on the lists.
+
+- Pick by matching the request to each drink's style, maker, ABV, and tasting notes. If nothing fits well, pick the closest and say so kindly.
+- source: "bottle" with that bottle's id, or "tap" with that tap's id. Use the ids exactly as given.
+- pitch: one or two short sentences on why this one, in a warm, easygoing bar voice. No emojis.
+- serve: how to pour it, a few words (e.g. "neat, in a Glencairn", "on one big rock", "a cold pint"). For wine, the glass; for a tap beer, the pour.`;
+
+const BARTENDER_SCHEMA = {
+  type: "object",
+  properties: {
+    source: { type: "string", enum: ["bottle", "tap"] },
+    id: { type: "integer" },
+    pitch: { type: "string" },
+    serve: { type: "string" },
+  },
+  required: ["source", "id", "pitch", "serve"],
+  additionalProperties: false,
+};
+
+// bottles: rows on hand ({ id, category, name, maker, abv, vintage, notes }); taps: pouring taps
+// ({ id, beer, brewery, style, abv }). mood: what the person asked for.
+// Returns { source, id, pitch, serve, usage }; the caller checks the id is real.
+export async function recommendPour({ apiKey, model, bottles, taps, mood }) {
+  if (!mood) throw new AiError("Tell the bartender what you're in the mood for", 400);
+  if (!bottles.length && !taps.length) throw new AiError("There's nothing in the house to pour", 400);
+  const lists = {
+    cellar: bottles.map((b) => ({
+      id: b.id, category: b.category, name: b.name, maker: b.maker, abv: b.abv, vintage: b.vintage,
+      notes: b.notes ? b.notes.slice(0, 300) : null,
+    })),
+    on_tap: taps.map((t) => ({ id: t.id, beer: t.beer, brewery: t.brewery, style: t.style, abv: t.abv })),
+  };
+  const content = [{
+    type: "text",
+    text: `What's in the house (JSON):\n${JSON.stringify(lists)}\n\nThe request: "${mood}"`,
+  }];
+  return askForJson({ apiKey, model, system: BARTENDER_SYSTEM, content, schema: BARTENDER_SCHEMA });
 }
