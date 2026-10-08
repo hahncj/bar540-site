@@ -79,6 +79,8 @@ const SENSORS = {
 const SENSOR_HISTORY_DAYS = 90;
 
 const MAX_STOCK_IMAGE_BYTES = 5 * 1024 * 1024;
+// Gallery photos are resized in the browser first; this is a backstop.
+const MAX_GALLERY_IMAGE_BYTES = 10 * 1024 * 1024;
 const IMAGE_EXTS = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
 
 async function storePhoto(env, bytes, contentType, ext) {
@@ -291,6 +293,49 @@ export default {
         try { await env.PHOTOS.delete(key); } catch (e) {}
       }
       await env.DB.prepare("DELETE FROM bottles WHERE id = ?").bind(id).run();
+      return Response.json({ ok: true });
+    }
+
+    // --- Gallery photos, newest first ---
+    if (url.pathname === "/api/gallery" && request.method === "GET") {
+      const { results } = await env.DB.prepare(
+        "SELECT id, photo_url, caption, added_at FROM gallery_photos ORDER BY id DESC"
+      ).all();
+      return Response.json(results);
+    }
+
+    // --- Add a gallery photo (multipart: photo, caption) ---
+    if (url.pathname === "/api/gallery" && request.method === "POST") {
+      if (!session) return jsonError("Sign in to add photos", 401);
+      let form;
+      try {
+        form = await request.formData();
+      } catch (e) {
+        return jsonError("Invalid form submission", 400);
+      }
+      const photo = form.get("photo");
+      if (!photo || typeof photo !== "object" || photo.size === 0) return jsonError("Pick a photo to add", 400);
+      const contentType = (photo.type || "").toLowerCase();
+      const ext = IMAGE_EXTS[contentType];
+      if (!ext) return jsonError("Photo must be a JPEG, PNG, WebP, or GIF", 400);
+      if (photo.size > MAX_GALLERY_IMAGE_BYTES) return jsonError("Photo is too large — try a smaller one", 400);
+      const caption = (form.get("caption") || "").toString().trim().slice(0, 60) || null;
+
+      const photo_url = await storePhoto(env, await photo.arrayBuffer(), contentType, ext);
+      const row = await env.DB.prepare(
+        "INSERT INTO gallery_photos (photo_url, caption) VALUES (?, ?) RETURNING id, photo_url, caption, added_at"
+      ).bind(photo_url, caption).first();
+      return Response.json(row);
+    }
+
+    // --- Remove a gallery photo (and its R2 file, if it's an upload) ---
+    if (url.pathname.startsWith("/api/gallery/") && request.method === "DELETE") {
+      if (!session) return jsonError("Sign in to remove photos", 401);
+      const id = url.pathname.replace("/api/gallery/", "");
+      const row = await env.DB.prepare("DELETE FROM gallery_photos WHERE id = ? RETURNING photo_url").bind(id).first();
+      if (row && row.photo_url.startsWith("/photos/")) {
+        try { await env.PHOTOS.delete(row.photo_url.replace("/photos/", "")); } catch (e) {}
+      }
       return Response.json({ ok: true });
     }
 
