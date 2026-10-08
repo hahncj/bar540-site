@@ -178,20 +178,33 @@ var BAR540_SEASONS = {
     color:var(--cream-dim);
   }
 
-  /* NEON SIGN - lit when the bar's open, a dark tube when it isn't */
-  .neon-wrap{margin-top:24px;}
+  /* NEON SIGN - hangs on two wires in the hero's top-right corner, like a sign in a front window.
+     Lit when the bar's open, a dark tube when it isn't. */
+  .hero > .neon-wrap{
+    position:absolute; z-index:2; top:0; right:clamp(12px, 5vw, 64px);
+    display:flex; flex-direction:column; align-items:center;
+    padding-top:30px; /* room for the wires */
+  }
   .neon-wrap[hidden]{display:none;}
   .neon{
-    display:inline-block; padding:4px 26px 8px;
-    border:3px solid rgba(245,239,228,0.14); border-radius:16px;
-    font-family:'Caveat', cursive; font-weight:700; font-size:48px; line-height:1; letter-spacing:0.04em;
+    position:relative; display:inline-block; padding:3px 16px 6px;
+    border:3px solid rgba(245,239,228,0.14); border-radius:12px;
+    font-family:'Caveat', cursive; font-weight:700; font-size:32px; line-height:1; letter-spacing:0.04em;
     color:rgba(245,239,228,0.16);
+    transform:rotate(3deg); transform-origin:50% -30px;
     transition:color .4s, border-color .4s, box-shadow .4s, text-shadow .4s;
   }
+  /* The wires, from the top of the hero (just under the header) down to the sign's frame */
+  .neon::before, .neon::after{
+    content:''; position:absolute; bottom:100%; width:1px; height:33px;
+    background:rgba(245,239,228,0.3); margin-bottom:3px;
+  }
+  .neon::before{left:20%;}
+  .neon::after{right:20%;}
   .neon.on{
     color:#fff4ec; border-color:#e6fffa;
-    text-shadow:0 0 3px #fff, 0 0 10px var(--coral), 0 0 22px var(--coral), 0 0 44px var(--coral);
-    box-shadow:0 0 4px #fff, 0 0 12px var(--teal), 0 0 28px var(--teal), inset 0 0 12px var(--teal);
+    text-shadow:0 0 3px #fff, 0 0 8px var(--coral), 0 0 18px var(--coral), 0 0 34px var(--coral);
+    box-shadow:0 0 4px #fff, 0 0 10px var(--teal), 0 0 22px var(--teal), inset 0 0 10px var(--teal);
   }
   .neon.on .neon-word{display:inline-block; animation:neon-flicker 9s linear infinite;}
   .neon.ignite .neon-word{animation:neon-ignite 1.1s linear;}
@@ -203,11 +216,18 @@ var BAR540_SEASONS = {
     0%{opacity:0.1;} 10%{opacity:1;} 18%{opacity:0.15;} 30%{opacity:1;} 36%{opacity:0.3;} 52%, 100%{opacity:1;}
   }
   @media (prefers-reduced-motion:reduce){ .neon.on .neon-word, .neon.ignite .neon-word{animation:none;} }
-  .neon-caption{font-family:'Caveat', cursive; font-weight:700; font-size:20px; color:var(--cream-dim); margin-top:6px;}
+  .neon-caption{font-family:'Caveat', cursive; font-weight:700; font-size:16px; line-height:1.1; color:var(--cream-dim); margin-top:8px; max-width:130px; text-align:center;}
   .neon-flip{
-    margin-top:8px; font:inherit; font-size:12px; font-weight:600;
-    background:none; color:var(--gold); border:1px solid var(--gold); border-radius:20px;
-    padding:5px 14px; cursor:pointer;
+    margin-top:6px; font:inherit; font-size:11px; font-weight:600; white-space:nowrap;
+    background:var(--bg); color:var(--gold); border:1px solid var(--gold); border-radius:20px;
+    padding:4px 12px; cursor:pointer;
+  }
+  /* Phones: a smaller sign tucked in the corner so it clears the logo */
+  @media (max-width:560px){
+    .hero > .neon-wrap{right:10px; padding-top:20px;}
+    .neon{font-size:20px; padding:2px 9px 4px; border-width:2px; border-radius:8px; transform-origin:50% -20px;}
+    .neon::before, .neon::after{height:22px; margin-bottom:2px;}
+    .neon-caption{font-size:13px; max-width:80px; margin-top:5px;}
   }
   .neon-flip:hover{background:var(--gold); color:var(--bg-deep);}
   .neon-flip[hidden]{display:none;}
@@ -704,7 +724,7 @@ var BAR540_SEASONS = {
   :root[data-season="derby"]{--coral:#ff5f7e; --coral-deep:#e2445f; --teal:#6fd49a;}
   :root[data-season="july4"]{--coral:#ff4d5a; --coral-deep:#e03341; --teal:#6b9bff;}
   .hero{position:relative;}
-  .hero > *:not(.season-fx){position:relative; z-index:1;}
+  .hero > *:not(.season-fx):not(.neon-wrap){position:relative; z-index:1;}
   .season-fx{position:absolute; inset:0; z-index:0; pointer-events:none; overflow:hidden;}
   .season-fx span{position:absolute; top:-40px; line-height:1; opacity:0.55; will-change:transform;}
   .season-fx .fall{animation:season-fall linear infinite;}
@@ -762,6 +782,12 @@ var BAR540_SEASONS = {
 
 <section class="hero">
   <div class="season-fx" id="seasonFx" aria-hidden="true"></div>
+  <!-- Hangs in the hero's top-right corner, like a sign in a front window. -->
+  <div class="neon-wrap" id="neonWrap" hidden>
+    <div class="neon" id="neonSign" role="status"><span class="neon-word">Open</span></div>
+    <div class="neon-caption" id="neonCaption"></div>
+    <button class="neon-flip" id="neonFlip" type="button" hidden></button>
+  </div>
   <div class="hero-logo-wrap">
     <div class="hero-logo-ring"></div>
     <img class="hero-logo" src="/img/logo.jpg" alt="Bar 540 — Est. 2012 badge">
@@ -769,11 +795,6 @@ var BAR540_SEASONS = {
   <div class="script-tag" id="heroTagline">kick your feet up</div>
   <h1 class="display">Bar 540</h1>
   <p class="sub">Est. 2012 &middot; time to relax</p>
-  <div class="neon-wrap" id="neonWrap" hidden>
-    <div class="neon" id="neonSign" role="status"><span class="neon-word">Open</span></div>
-    <div class="neon-caption" id="neonCaption"></div>
-    <button class="neon-flip" id="neonFlip" type="button" hidden></button>
-  </div>
   <div class="dots" id="heroDots"><span></span><span></span><span></span></div>
   <div class="gallery" id="gallery" hidden aria-roledescription="carousel" aria-label="Photos from the counter">
     <div class="polaroid" id="polaroid" tabindex="0">
